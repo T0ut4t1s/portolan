@@ -1,0 +1,48 @@
+image:
+  repository: ghcr.io/t0ut4t1s/portolan
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Collection cadence and snapshot retention.
+interval: 15m
+keep: 500
+# Optional label recorded in every snapshot (shown in the map header).
+clusterName: ""
+
+service:
+  port: 8080
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  # Use a pre-existing PVC instead of creating one.
+  existingClaim: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# Explicit probe timeouts — the Kubernetes default of 1s silently flaps
+# slow endpoints.
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 5
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 4
+
+extraArgs: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

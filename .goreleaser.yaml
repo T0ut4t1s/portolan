@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+version: 2
+project_name: portolan
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: portolan
+    main: ./cmd/portolan
+    binary: portolan
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+dockers:
+  - image_templates:
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-amd64
+    use: buildx
+    goarch: amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.source=https://github.com/T0ut4t1s/portolan
+      - --label=org.opencontainers.image.licenses=AGPL-3.0-or-later
+  - image_templates:
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-arm64
+    use: buildx
+    goarch: arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.source=https://github.com/T0ut4t1s/portolan
+      - --label=org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+docker_manifests:
+  - name_template: ghcr.io/t0ut4t1s/portolan:{{ .Version }}
+    image_templates:
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-amd64
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-arm64
+  - name_template: ghcr.io/t0ut4t1s/portolan:latest
+    image_templates:
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-amd64
+      - ghcr.io/t0ut4t1s/portolan:{{ .Version }}-arm64
+
+release:
+  footer: |
+    Container image: `ghcr.io/t0ut4t1s/portolan:{{ .Version }}` (linux/amd64 + arm64, distroless).
