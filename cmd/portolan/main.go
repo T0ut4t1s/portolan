@@ -48,7 +48,7 @@ func main() {
 	case "whatif":
 		err = fmt.Errorf("whatif: not implemented yet (roadmap)")
 	case "serve":
-		err = fmt.Errorf("serve: not implemented yet (roadmap)")
+		err = cmdServe(ctx, os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":

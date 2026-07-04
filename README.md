@@ -97,15 +97,22 @@ portolan audit -i snapshot.json
 
 # What changed in the mesh between two captures?
 portolan diff snapshots/monday.json snapshots/today.json
+
+# Or run the dashboard in-cluster (or anywhere with a kubeconfig):
+portolan serve --interval 15m --data /data
+#   GET /              the map        GET /audit.json     findings
+#   GET /brief.md      LLM handoff    GET /snapshots/     history archive
+#   GET /healthz       liveness       GET /snapshot.json  latest capture
 ```
 
-`whatif` and the in-cluster `serve` dashboard (with a Helm chart) are in
-development — the CLI stubs exist but return "not implemented yet".
+`whatif` is in development — the CLI stub exists but returns "not
+implemented yet".
 
 ## Status
 
-Early but working: `snapshot`, `render`, `audit`, and `diff` function today.
-The snapshot schema is versioned; breaking changes bump the version.
+Early but working: `snapshot`, `render`, `audit`, `diff`, and `serve`
+function today. The snapshot schema is versioned; breaking changes bump the
+version.
 
 ## License
 
