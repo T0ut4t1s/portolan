@@ -45,6 +45,8 @@
   .warnbar{background:var(--world-soft);border:1px solid var(--world);border-radius:10px;
     color:var(--ink-2);font-size:.78rem;padding:8px 12px;margin:0 0 12px;}
   .warnbar b{color:var(--world)}
+  .warn-btn{padding:2px 10px;font-size:.7rem;margin-left:6px;vertical-align:baseline;}
+  .scrolllist{max-height:280px;overflow-y:auto;padding-right:6px;}
 
   .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 16px;}
   .search{flex:1 1 220px;max-width:340px;background:var(--surface);border:1px solid var(--line);
@@ -265,7 +267,14 @@ const DATA = __PORTOLAN_DATA__;
   if (DATA.warnings && DATA.warnings.length) {
     const w = $("#warnbar");
     w.hidden = false;
-    w.innerHTML = "<b>Not rendered:</b> " + DATA.warnings.map(esc).join(" · ");
+    w.innerHTML = "<b>Not rendered:</b> " + DATA.warnings.map(esc).join(" · ") +
+      ((DATA.deadRefs || []).length
+        ? ' <button class="btn warn-btn" id="warn-audit">show in audit</button>' : "");
+    const wa = $("#warn-audit");
+    if (wa) wa.addEventListener("click", () => {
+      if (!auditMode) $("#audit").click();
+      insp.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function esc(s){ const d=document.createElement("i"); d.textContent=s; return d.innerHTML; }
@@ -366,9 +375,9 @@ const DATA = __PORTOLAN_DATA__;
       <div class="rgroup"><h4>ingress from world/all (${world.length})</h4>
         ${world.length ? `<div class="ctx"><ul>${world.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : '<p class="empty">none</p>'}</div>
       <div class="rgroup"><h4>selector refs matching nothing (${dead.length})</h4>
-        <div class="ctx">May be intentional — scaled-down nodes or future pods.
-        <ul>${dead.slice(0,40).map(r=>`<li>${esc(r)}</li>`).join("")}</ul>
-        ${dead.length > 40 ? `<b>…and ${dead.length-40} more (see: portolan audit)</b>` : ""}</div></div>`;
+        <div class="ctx">May be intentional — completed jobs, scaled-down nodes, or future
+        pods; anything unexplained is a dead rule.
+        <ul class="scrolllist">${dead.map(r=>`<li>${esc(r)}</li>`).join("") || "<li>none</li>"}</ul></div></div>`;
   }
 
   // ---------- passage query ----------
