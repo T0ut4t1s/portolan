@@ -21,10 +21,12 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   CiliumClusterwideNetworkPolicy, and native NetworkPolicy), plus the
   namespaces and workloads they select, into one deterministic JSON artifact.
   Working today.
-- **Map** *(in development)* — renders a snapshot as a directional,
-  port-labeled graph, with namespace boundaries and default-deny coverage made
-  visible. Hubble shows you the traffic that *happened*; Portolan shows you the
-  traffic that is *permitted*.
+- **Map** — renders a snapshot as a directional, port-labeled graph in one
+  self-contained HTML file: namespace boundaries, default-deny coverage,
+  cross-namespace allows, and **half-open passages** (traffic allowed out of
+  one namespace but not into the default-deny namespace it targets — a
+  misconfiguration class that is invisible in raw YAML). Hubble shows you the
+  traffic that *happened*; Portolan shows you the traffic that is *permitted*.
 - **What-if** *(roadmap)* — feed it a draft policy and get the blast radius:
   which flows it newly permits, which observed drops it would fix, what it
   removes. Powered by Cilium's own policy engine, not a reimplementation — so
@@ -71,15 +73,18 @@ portolan snapshot -o snapshot.json
 # Keeping history? Timestamp the filenames — diffs between any two answer
 # "what changed":
 portolan snapshot -o "snapshots/$(date +%Y%m%dT%H%M%S).json"
+
+# Render the map — a single HTML file, open it anywhere:
+portolan render -i snapshot.json -o map.html
 ```
 
-`render`, `whatif`, and the in-cluster `serve` dashboard (with a Helm chart)
-are in development — the CLI stubs exist but return "not implemented yet".
+`whatif` and the in-cluster `serve` dashboard (with a Helm chart) are in
+development — the CLI stubs exist but return "not implemented yet".
 
 ## Status
 
-Early. The snapshot collector works today; rendering is the current focus.
-The snapshot schema is versioned; breaking changes bump the version.
+Early but working: `snapshot` and `render` function today. The snapshot
+schema is versioned; breaking changes bump the version.
 
 ## License
 

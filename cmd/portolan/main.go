@@ -17,6 +17,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/T0ut4t1s/portolan/pkg/graph"
+	"github.com/T0ut4t1s/portolan/pkg/render"
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
 )
 
@@ -36,7 +38,7 @@ func main() {
 	case "snapshot":
 		err = cmdSnapshot(ctx, os.Args[2:])
 	case "render":
-		err = fmt.Errorf("render: not implemented yet (in development)")
+		err = cmdRender(os.Args[2:])
 	case "whatif":
 		err = fmt.Errorf("whatif: not implemented yet (roadmap)")
 	case "serve":
@@ -61,13 +63,62 @@ func usage() {
 
 Commands:
   snapshot   capture cluster policy state to a snapshot file
-  render     render a snapshot to a static HTML map (in development)
+  render     render a snapshot to a self-contained HTML map
   whatif     blast radius of a draft policy (roadmap)
   serve      in-cluster dashboard (roadmap)
   version    print version
 
 Run 'portolan <command> -h' for that command's flags.
 `)
+}
+
+func cmdRender(args []string) error {
+	fs := flag.NewFlagSet("render", flag.ExitOnError)
+	in := fs.String("i", "snapshot.json", "input snapshot file (- for stdin)")
+	out := fs.String("o", "map.html", "output HTML file (- for stdout)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	var data []byte
+	var err error
+	if *in == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(*in)
+	}
+	if err != nil {
+		return err
+	}
+
+	var snap snapshot.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fmt.Errorf("parsing snapshot: %w", err)
+	}
+	if snap.SchemaVersion != snapshot.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "warning: snapshot schema %q, this build expects %q — rendering anyway\n",
+			snap.SchemaVersion, snapshot.SchemaVersion)
+	}
+
+	g := graph.Build(&snap)
+	html, err := render.HTML(g)
+	if err != nil {
+		return err
+	}
+
+	if *out == "-" {
+		_, err = os.Stdout.Write(html)
+		return err
+	}
+	if err := os.WriteFile(*out, html, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s: %d edges (%d cross-namespace) from %d policies\n",
+		*out, g.Stats.Edges, g.Stats.CrossEdges, g.Stats.Policies)
+	for _, w := range g.Warnings {
+		fmt.Fprintf(os.Stderr, "note: %s\n", w)
+	}
+	return nil
 }
 
 func cmdSnapshot(ctx context.Context, args []string) error {
