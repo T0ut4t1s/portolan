@@ -183,7 +183,7 @@
   <button class="btn" id="audit" aria-pressed="false">audit</button>
   <button class="btn" id="reset">reset</button>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
-  <span class="hint">hover a workload · click to pin · click a namespace to focus</span>
+  <span class="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
 <div class="layout">
@@ -226,7 +226,10 @@ const DATA = __PORTOLAN_DATA__;
   const wlById = new Map();
   DATA.namespaces.forEach(n => n.workloads.forEach(w => wlById.set(w.id, w)));
   const extById = new Map(DATA.externals.map(e => [e.id, e]));
-  const nodeNS = id => id.includes("/") ? id.split("/")[0] : null;
+  // Mirrors Go's nodeNS: externals (whose IDs may contain "/", e.g. CIDRs)
+  // are never namespaces.
+  const nodeNS = id =>
+    /^(entity|cidr|fqdn):/.test(id) ? null : (id.includes("/") ? id.split("/")[0] : null);
 
   const edgesByNode = new Map();
   DATA.edges.forEach(e => {
@@ -464,6 +467,31 @@ const DATA = __PORTOLAN_DATA__;
     return name.includes(query) || ns.workloads.some(w => w.name.includes(query));
   }
 
+  // neighborhoodNS: the namespaces a node's edges touch (plus its own).
+  function neighborhoodNS(id){
+    const set = new Set();
+    const own = nodeNS(id);
+    if (own) set.add(own);
+    (edgesByNode.get(id) || []).forEach(e => {
+      [nodeNS(e.s), nodeNS(e.d)].forEach(n => { if (n) set.add(n); });
+    });
+    return set;
+  }
+
+  // Card visibility = search filter ∩ focus contraction. Hover only dims
+  // (no layout shift under the cursor); pinning contracts the grid to the
+  // selection's neighborhood so connected namespaces sit side by side.
+  function applyCardVisibility(){
+    let contract = null;
+    if (pinned) contract = neighborhoodNS(pinned);
+    else if (queryPair) contract = new Set(queryPair.map(nodeNS).filter(Boolean));
+    grid.querySelectorAll(".ns").forEach(card => {
+      const name = card.dataset.ns;
+      const vis = visibleNS(name) && (!contract || contract.has(name));
+      card.style.display = vis ? "" : "none";
+    });
+  }
+
   function redraw(){
     const rect = stage.getBoundingClientRect();
     svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
@@ -476,6 +504,7 @@ const DATA = __PORTOLAN_DATA__;
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
+    applyCardVisibility(); // contract BEFORE drawing so edge anchors are final
 
     if (queryPair) return drawPair(queryPair);
     if (active) return drawNode(active);
@@ -659,19 +688,14 @@ const DATA = __PORTOLAN_DATA__;
   $("#reset").addEventListener("click", () => {
     pinned = hovered = focusNS = queryPair = null;
     $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
-    applyFilter(); inspectHome(); redraw();
+    inspectHome(); redraw();
   });
   $("#xonly").addEventListener("click", function(){
     xonly = !xonly; this.setAttribute("aria-pressed", String(xonly)); redraw();
   });
   $("#search").addEventListener("input", function(){
-    query = this.value.trim().toLowerCase(); applyFilter(); redraw();
+    query = this.value.trim().toLowerCase(); redraw();
   });
-  function applyFilter(){
-    grid.querySelectorAll(".ns").forEach(card => {
-      card.style.display = visibleNS(card.dataset.ns) ? "" : "none";
-    });
-  }
 
   let raf;
   const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(redraw); };
