@@ -75,7 +75,10 @@
   .stage-wrap{position:relative;background:var(--stage);border:1px solid var(--line);
     border-radius:16px;box-shadow:var(--shadow);padding:18px;}
   .stage{position:relative;}
-  #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;}
+  /* Overview edges sit BEHIND the cards (a texture, not a foreground);
+     any committed selection lifts the layer above so its edges read. */
+  #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;}
+  body.dimming #edges{z-index:3;}
   .grid{position:relative;z-index:2;display:grid;
     grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
 
@@ -115,11 +118,15 @@
   .quiet{margin-top:14px;font-size:.76rem;color:var(--faint);}
   .quiet b{color:var(--muted)}
 
-  .edge{fill:none;stroke:var(--accent);stroke-width:1.5;opacity:.45;}
-  .edge.agg{stroke-width:2;}
+  .edge{fill:none;stroke:var(--accent);stroke-width:1.4;opacity:.16;}
+  .edge.agg{stroke-width:1.6;opacity:.2;}
+  /* mid: a committed-but-unspecific scope (namespace focus) — readable, calm */
+  .edge.mid{stroke:var(--accent);stroke-width:1.8;opacity:.5;}
+  /* hot: a specific pod under the cursor or pinned — full brightness */
   .edge.hot{stroke:var(--allow);stroke-width:2.4;opacity:1;}
   .edge.ext{stroke:var(--world);}
   .edge.half{stroke:var(--deny);stroke-dasharray:6 5;}
+  .edge.agg.half{opacity:.5;}
   .elabel{font-family:var(--mono);font-size:10px;font-weight:600;fill:var(--muted);
     paint-order:stroke;stroke:var(--stage);stroke-width:4;stroke-linejoin:round;text-anchor:middle;}
   .elabel.hot{fill:var(--allow);font-size:11px;}
@@ -506,7 +513,9 @@ const DATA = __PORTOLAN_DATA__;
       markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
 
-    const active = pinned || hovered;
+    // Hover wins over pin so you can peek at other pods inside a
+    // contracted neighborhood without losing the contraction.
+    const active = hovered || pinned;
     document.body.classList.toggle("dimming", !!(active || focusNS || queryPair));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
@@ -543,7 +552,8 @@ const DATA = __PORTOLAN_DATA__;
       const ea = grid.querySelector(`.ns[data-ns="${CSS.escape(a)}"]`);
       const eb = grid.querySelector(`.ns[data-ns="${CSS.escape(b)}"]`);
       if (!ea || !eb) return;
-      drawPath(anchor(ea), anchor(eb), "edge agg" + (v.half ? " half" : ""), v.n > 1 ? String(v.n) : "");
+      // No labels in the overview — it's a shape to scan, not a table.
+      drawPath(anchor(ea), anchor(eb), "edge agg" + (v.half ? " half" : ""), "");
     });
   }
 
@@ -585,7 +595,9 @@ const DATA = __PORTOLAN_DATA__;
                     rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
           if (c) c.classList.add("adj");
         });
-        drawPath(anchor(es), anchor(ed), "edge hot" + (halfOpen(e) ? " half" : ""), e.ports.slice(0,2).join(","));
+        // Namespace scope is committed but unspecific: calm lines, no port
+        // labels. Hover or pin a pod for full brightness and ports.
+        drawPath(anchor(es), anchor(ed), "edge mid" + (halfOpen(e) ? " half" : ""), "");
       });
     });
     grid.querySelectorAll(".ns").forEach(c => {
