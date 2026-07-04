@@ -34,7 +34,11 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
 - **Audit** — `portolan audit` (and the map's audit panel) reports half-open
   passages, namespaces without default-deny, workloads with declared ingress
   from the world, and selector references that match nothing.
-  `--fail-on-findings` makes it a CI gate.
+  `--fail-on-findings` makes it a CI gate. Add `--brief findings.md` to emit
+  a Markdown **investigation brief** — findings restructured as instructions
+  for an LLM agent (or a human) with read access: evidence, ready-to-run
+  verification commands, benign explanations to rule out, and orders to
+  verify live state before concluding anything.
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
   policies added/removed/changed and the derived allow-edges that appeared or
   vanished. `--exit-code` for pipelines.

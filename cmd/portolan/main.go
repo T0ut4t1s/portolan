@@ -106,6 +106,7 @@ func cmdAudit(args []string) error {
 	fs := flag.NewFlagSet("audit", flag.ExitOnError)
 	in := fs.String("i", "snapshot.json", "input snapshot file (- for stdin)")
 	failOn := fs.Bool("fail-on-findings", false, "exit 1 when half-open passages exist (CI gate)")
+	brief := fs.String("brief", "", "also write a Markdown investigation brief for an LLM agent (- for stdout)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -113,7 +114,21 @@ func cmdAudit(args []string) error {
 	if err != nil {
 		return err
 	}
-	a := graph.ComputeAudit(graph.Build(snap))
+	g := graph.Build(snap)
+	a := graph.ComputeAudit(g)
+
+	if *brief != "" {
+		md := graph.Brief(g, a)
+		if *brief == "-" {
+			if _, err := os.Stdout.Write(md); err != nil {
+				return err
+			}
+		} else if err := os.WriteFile(*brief, md, 0o644); err != nil {
+			return err
+		} else {
+			fmt.Fprintf(os.Stderr, "wrote investigation brief: %s\n", *brief)
+		}
+	}
 
 	fmt.Printf("Half-open passages (%d) — egress declared, default-deny receiver never accepts:\n", len(a.HalfOpen))
 	for _, e := range a.HalfOpen {
