@@ -131,7 +131,7 @@ type builder struct {
 	edges     map[string]*Edge               // "src|dst" -> aggregated edge
 	externals map[string]External
 	dropped   map[string]int // unsupported-construct counters
-	unmatched int            // selector references matching no live workload
+	deadRefs  []string       // "policy → selector" refs matching no live workload
 }
 
 // Build derives the renderable topology from a snapshot.
@@ -362,7 +362,7 @@ func (b *builder) netpolPeers(peer netpolPeer, policyNS, prov string) []string {
 		}
 	}
 	if out == nil {
-		b.unmatched++
+		b.deadRefs = append(b.deadRefs, prov+" → netpol peer "+selSummary(podSel))
 	}
 	return out
 }
@@ -402,9 +402,29 @@ func (b *builder) match(sel labelSel, defaultNS, prov string) []string {
 		}
 	}
 	if out == nil {
-		b.unmatched++
+		b.deadRefs = append(b.deadRefs, prov+" → "+selSummary(sel))
 	}
 	return out
+}
+
+// selSummary renders a selector compactly for audit output.
+func selSummary(sel labelSel) string {
+	var parts []string
+	keys := make([]string, 0, len(sel.MatchLabels))
+	for k := range sel.MatchLabels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, k+"="+sel.MatchLabels[k])
+	}
+	for _, e := range sel.MatchExpressions {
+		parts = append(parts, fmt.Sprintf("%s %s %v", e.Key, e.Operator, e.Values))
+	}
+	if len(parts) == 0 {
+		return "(all endpoints in scope)"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // splitSelector separates namespace scoping from pod-label matching.
@@ -638,10 +658,12 @@ func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]i
 	for construct, n := range b.dropped {
 		g.Warnings = append(g.Warnings, fmt.Sprintf("%d %s not rendered", n, construct))
 	}
-	if b.unmatched > 0 {
-		g.Warnings = append(g.Warnings, fmt.Sprintf("%d selector reference(s) matched no live workload", b.unmatched))
+	if len(b.deadRefs) > 0 {
+		g.Warnings = append(g.Warnings, fmt.Sprintf("%d selector reference(s) matched no live workload (see audit)", len(b.deadRefs)))
 	}
 	slices.Sort(g.Warnings)
+	slices.Sort(b.deadRefs)
+	g.DeadRefs = slices.Compact(b.deadRefs)
 
 	g.Stats = Stats{
 		Namespaces: len(g.Namespaces),

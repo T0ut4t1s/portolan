@@ -24,9 +24,13 @@ type Graph struct {
 	Externals []External `json:"externals"`
 	Edges     []Edge     `json:"edges"`
 	// Warnings counts policy constructs the builder does not interpret
-	// (L7 rule bodies, deny rules, toServices, node policies, selectors
-	// matching no live workload). Rendered as an honesty banner.
+	// (L7 rule bodies, deny rules, toServices, node policies). Rendered as
+	// an honesty banner.
 	Warnings []string `json:"warnings"`
+	// DeadRefs names every selector reference that matched no live
+	// workload — "policy → selector" — food for the audit view. May be
+	// intentional (scaled-down node, future pods) or a dead rule.
+	DeadRefs []string `json:"deadRefs,omitempty"`
 	Stats    Stats    `json:"stats"`
 }
 

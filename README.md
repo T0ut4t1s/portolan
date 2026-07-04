@@ -27,6 +27,17 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   one namespace but not into the default-deny namespace it targets — a
   misconfiguration class that is invisible in raw YAML). Hubble shows you the
   traffic that *happened*; Portolan shows you the traffic that is *permitted*.
+- **Passage query** — ask the map "can A reach B?" and get a verdict card:
+  declared (with ports and the policies on each side), half-open (with the
+  fix location named), or no passage (with what A may reach and what B
+  accepts, so the missing rule's home is obvious).
+- **Audit** — `portolan audit` (and the map's audit panel) reports half-open
+  passages, namespaces without default-deny, workloads with declared ingress
+  from the world, and selector references that match nothing.
+  `--fail-on-findings` makes it a CI gate.
+- **Diff** — `portolan diff old.json new.json` compares two snapshots:
+  policies added/removed/changed and the derived allow-edges that appeared or
+  vanished. `--exit-code` for pipelines.
 - **What-if** *(roadmap)* — feed it a draft policy and get the blast radius:
   which flows it newly permits, which observed drops it would fix, what it
   removes. Powered by Cilium's own policy engine, not a reimplementation — so
@@ -76,6 +87,12 @@ portolan snapshot -o "snapshots/$(date +%Y%m%dT%H%M%S).json"
 
 # Render the map — a single HTML file, open it anywhere:
 portolan render -i snapshot.json -o map.html
+
+# Findings report (half-open passages, deny gaps, dead selector refs):
+portolan audit -i snapshot.json
+
+# What changed in the mesh between two captures?
+portolan diff snapshots/monday.json snapshots/today.json
 ```
 
 `whatif` and the in-cluster `serve` dashboard (with a Helm chart) are in
@@ -83,8 +100,8 @@ development — the CLI stubs exist but return "not implemented yet".
 
 ## Status
 
-Early but working: `snapshot` and `render` function today. The snapshot
-schema is versioned; breaking changes bump the version.
+Early but working: `snapshot`, `render`, `audit`, and `diff` function today.
+The snapshot schema is versioned; breaking changes bump the version.
 
 ## License
 

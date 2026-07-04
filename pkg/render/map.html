@@ -177,6 +177,8 @@
   </span>
   <datalist id="nodelist"></datalist>
   <button class="btn" id="xonly" aria-pressed="true">cross-namespace only</button>
+  <button class="btn" id="dns" aria-pressed="true">hide DNS</button>
+  <button class="btn" id="audit" aria-pressed="false">audit</button>
   <button class="btn" id="reset">reset</button>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
   <span class="hint">hover a workload · click to pin · click a namespace to focus</span>
@@ -341,7 +343,33 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // ---------- view state ----------
-  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "", queryPair = null;
+  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "", queryPair = null,
+      hideDNS = true, auditMode = false;
+
+  // ---------- audit ----------
+  function renderAudit(){
+    const halves = DATA.edges.filter(halfOpen);
+    const worldLike = new Set(["entity:world","entity:all","cidr:0.0.0.0/0","cidr:::/0"]);
+    const world = [...new Set(DATA.edges.filter(e => worldLike.has(e.s) && e.in).map(e => e.d))].sort();
+    const noDeny = DATA.namespaces.filter(n => !n.defaultDeny && n.workloads.length).map(n => n.name);
+    const dead = DATA.deadRefs || [];
+    const item = e => `<div class="rule"><span class="peer">
+        <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(e.s)}" data-qb="${esc(e.d)}">check</button>
+        ${esc(e.s)} → ${esc(e.d)}<small>${e.policies.map(esc).join("<br>")}</small></span>
+        <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
+    insp.innerHTML = `<p class="insp-kicker">audit</p>
+      <p class="insp-title">declared-topology findings</p>
+      <div class="rgroup"><h4>half-open passages (${halves.length})</h4>
+        ${halves.map(item).join("") || '<p class="empty">none</p>'}</div>
+      <div class="rgroup"><h4>namespaces without default-deny (${noDeny.length})</h4>
+        ${noDeny.length ? `<div class="ctx"><ul>${noDeny.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div>` : '<p class="empty">none — full coverage</p>'}</div>
+      <div class="rgroup"><h4>ingress from world/all (${world.length})</h4>
+        ${world.length ? `<div class="ctx"><ul>${world.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : '<p class="empty">none</p>'}</div>
+      <div class="rgroup"><h4>selector refs matching nothing (${dead.length})</h4>
+        <div class="ctx">May be intentional — scaled-down nodes or future pods.
+        <ul>${dead.slice(0,40).map(r=>`<li>${esc(r)}</li>`).join("")}</ul>
+        ${dead.length > 40 ? `<b>…and ${dead.length-40} more (see: portolan audit)</b>` : ""}</div></div>`;
+  }
 
   // ---------- passage query ----------
   const nodelist = $("#nodelist");
@@ -446,11 +474,18 @@ const DATA = __PORTOLAN_DATA__;
     drawOverview();
   }
 
+  // DNS plumbing: edges into cluster DNS, or whose only ports are 53.
+  function isDNS(e){
+    if (e.d.endsWith("/kube-dns") || e.d.endsWith("/coredns")) return true;
+    return e.ports.length > 0 && e.ports.every(p => p.startsWith("53/"));
+  }
+
   function drawOverview(){
     // Aggregate cross-namespace workload edges to namespace level.
     const agg = new Map();
     DATA.edges.forEach(e => {
       if (!e.cross) return;
+      if (hideDNS && isDNS(e)) return;
       const a = nodeNS(e.s), b = nodeNS(e.d);
       if (!visibleNS(a) || !visibleNS(b)) return;
       const key = a+"|"+b;
@@ -589,6 +624,22 @@ const DATA = __PORTOLAN_DATA__;
   [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
     if (e.key === "Enter") runQuery();
   }));
+  $("#dns").addEventListener("click", function(){
+    hideDNS = !hideDNS; this.setAttribute("aria-pressed", String(hideDNS)); redraw();
+  });
+  $("#audit").addEventListener("click", function(){
+    auditMode = !auditMode; this.setAttribute("aria-pressed", String(auditMode));
+    if (auditMode) { pinned = hovered = focusNS = queryPair = null; renderAudit(); redraw(); }
+    else { inspectHome(); redraw(); }
+  });
+  // audit rows carry a "check" button that runs the passage query
+  insp.addEventListener("click", e => {
+    const b = e.target.closest("[data-qa]");
+    if (!b) return;
+    $("#qa").value = b.dataset.qa; $("#qb").value = b.dataset.qb;
+    auditMode = false; $("#audit").setAttribute("aria-pressed","false");
+    runQuery();
+  });
   grid.addEventListener("keydown", e => {
     if (e.key === "Enter" && e.target.closest(".ns-head")) e.target.closest(".ns-head").click();
   });

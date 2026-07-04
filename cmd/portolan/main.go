@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 
 	"k8s.io/client-go/rest"
@@ -39,6 +41,10 @@ func main() {
 		err = cmdSnapshot(ctx, os.Args[2:])
 	case "render":
 		err = cmdRender(os.Args[2:])
+	case "audit":
+		err = cmdAudit(os.Args[2:])
+	case "diff":
+		err = cmdDiff(os.Args[2:])
 	case "whatif":
 		err = fmt.Errorf("whatif: not implemented yet (roadmap)")
 	case "serve":
@@ -64,12 +70,154 @@ func usage() {
 Commands:
   snapshot   capture cluster policy state to a snapshot file
   render     render a snapshot to a self-contained HTML map
+  audit      report half-open passages, deny gaps, and dead selector refs
+  diff       compare two snapshots (policies and derived edges)
   whatif     blast radius of a draft policy (roadmap)
   serve      in-cluster dashboard (roadmap)
   version    print version
 
 Run 'portolan <command> -h' for that command's flags.
 `)
+}
+
+func readSnapshot(path string) (*snapshot.Snapshot, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var snap snapshot.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("parsing snapshot %s: %w", path, err)
+	}
+	if snap.SchemaVersion != snapshot.SchemaVersion {
+		fmt.Fprintf(os.Stderr, "warning: %s has schema %q, this build expects %q — continuing anyway\n",
+			path, snap.SchemaVersion, snapshot.SchemaVersion)
+	}
+	return &snap, nil
+}
+
+func cmdAudit(args []string) error {
+	fs := flag.NewFlagSet("audit", flag.ExitOnError)
+	in := fs.String("i", "snapshot.json", "input snapshot file (- for stdin)")
+	failOn := fs.Bool("fail-on-findings", false, "exit 1 when half-open passages exist (CI gate)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	snap, err := readSnapshot(*in)
+	if err != nil {
+		return err
+	}
+	a := graph.ComputeAudit(graph.Build(snap))
+
+	fmt.Printf("Half-open passages (%d) — egress declared, default-deny receiver never accepts:\n", len(a.HalfOpen))
+	for _, e := range a.HalfOpen {
+		fmt.Printf("  %s -> %s %s  via %s\n", e.Src, e.Dst, strings.Join(e.Ports, ","), strings.Join(e.Policies, ", "))
+	}
+	fmt.Printf("\nNamespaces with workloads but no default-deny (%d):\n", len(a.NoDefaultDeny))
+	for _, ns := range a.NoDefaultDeny {
+		fmt.Printf("  %s\n", ns)
+	}
+	fmt.Printf("\nWorkloads with declared ingress from world/all (%d):\n", len(a.WorldReachable))
+	for _, w := range a.WorldReachable {
+		fmt.Printf("  %s\n", w)
+	}
+	fmt.Printf("\nSelector references matching no live workload (%d) — scaled-down, future, or dead:\n", len(a.DeadRefs))
+	for _, r := range a.DeadRefs {
+		fmt.Printf("  %s\n", r)
+	}
+	if *failOn && len(a.HalfOpen) > 0 {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func cmdDiff(args []string) error {
+	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+	exitCode := fs.Bool("exit-code", false, "exit 1 when the snapshots differ (CI gate)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return fmt.Errorf("usage: portolan diff [--exit-code] <old.json> <new.json>")
+	}
+	oldSnap, err := readSnapshot(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	newSnap, err := readSnapshot(fs.Arg(1))
+	if err != nil {
+		return err
+	}
+
+	polKey := func(p snapshot.Policy) string {
+		if p.Namespace == "" {
+			return fmt.Sprintf("%s/%s", p.Kind, p.Name)
+		}
+		return fmt.Sprintf("%s/%s/%s", p.Kind, p.Namespace, p.Name)
+	}
+	polMap := func(s *snapshot.Snapshot) map[string]string {
+		m := map[string]string{}
+		for _, p := range s.Policies {
+			var body strings.Builder
+			for _, r := range p.Rules {
+				body.Write(r)
+			}
+			m[polKey(p)] = body.String()
+		}
+		return m
+	}
+	edgeMap := func(s *snapshot.Snapshot) map[string]string {
+		m := map[string]string{}
+		for _, e := range graph.Build(s).Edges {
+			m[e.Src+" -> "+e.Dst] = strings.Join(e.Ports, ",")
+		}
+		return m
+	}
+
+	changed := false
+	report := func(title string, oldM, newM map[string]string) {
+		var added, removed, modified []string
+		for k := range newM {
+			if _, ok := oldM[k]; !ok {
+				added = append(added, k)
+			} else if oldM[k] != newM[k] {
+				modified = append(modified, k)
+			}
+		}
+		for k := range oldM {
+			if _, ok := newM[k]; !ok {
+				removed = append(removed, k)
+			}
+		}
+		sort.Strings(added)
+		sort.Strings(removed)
+		sort.Strings(modified)
+		fmt.Printf("%s: +%d added, -%d removed, ~%d changed\n", title, len(added), len(removed), len(modified))
+		for _, k := range added {
+			fmt.Printf("  + %s\n", k)
+		}
+		for _, k := range removed {
+			fmt.Printf("  - %s\n", k)
+		}
+		for _, k := range modified {
+			fmt.Printf("  ~ %s\n", k)
+		}
+		changed = changed || len(added)+len(removed)+len(modified) > 0
+	}
+
+	report("Policies", polMap(oldSnap), polMap(newSnap))
+	fmt.Println()
+	report("Edges (derived)", edgeMap(oldSnap), edgeMap(newSnap))
+	if *exitCode && changed {
+		os.Exit(1)
+	}
+	return nil
 }
 
 func cmdRender(args []string) error {
@@ -80,27 +228,12 @@ func cmdRender(args []string) error {
 		return err
 	}
 
-	var data []byte
-	var err error
-	if *in == "-" {
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(*in)
-	}
+	snap, err := readSnapshot(*in)
 	if err != nil {
 		return err
 	}
 
-	var snap snapshot.Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return fmt.Errorf("parsing snapshot: %w", err)
-	}
-	if snap.SchemaVersion != snapshot.SchemaVersion {
-		fmt.Fprintf(os.Stderr, "warning: snapshot schema %q, this build expects %q — rendering anyway\n",
-			snap.SchemaVersion, snapshot.SchemaVersion)
-	}
-
-	g := graph.Build(&snap)
+	g := graph.Build(snap)
 	html, err := render.HTML(g)
 	if err != nil {
 		return err
