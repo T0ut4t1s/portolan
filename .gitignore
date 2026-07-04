@@ -1,0 +1,14 @@
+# binaries
+/portolan
+/dist/
+
+# local snapshots and rendered maps
+*.snapshot.json
+snapshot.json
+map.html
+
+# editor/OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
