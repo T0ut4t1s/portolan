@@ -192,8 +192,6 @@
     <button class="btn" id="qgo">check</button>
   </span>
   <datalist id="nodelist"></datalist>
-  <button class="btn" id="xonly" aria-pressed="true">cross-namespace only</button>
-  <button class="btn" id="dns" aria-pressed="true">hide DNS</button>
   <button class="btn" id="audit" aria-pressed="false">audit</button>
   <button class="btn" id="reset">reset</button>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
@@ -309,7 +307,7 @@ const DATA = __PORTOLAN_DATA__;
     card.className = "ns"; card.dataset.ns = ns.name;
     card.innerHTML = `<div class="ns-head" role="button" tabindex="0">
         <span class="ns-name">${esc(ns.name)}</span>
-        ${ns.defaultDeny ? '<span class="deny">deny</span>' : ""}
+        ${ns.defaultDeny ? '<span class="deny">deny all</span>' : ""}
       </div><div class="chips"></div>`;
     const chips = card.querySelector(".chips");
     ns.workloads.forEach(w => {
@@ -385,8 +383,8 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // ---------- view state ----------
-  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "", queryPair = null,
-      hideDNS = true, auditMode = false, hoverEdgeKey = null;
+  let pinned = null, hovered = null, focusNS = null, query = "", queryPair = null,
+      auditMode = false, hoverEdgeKey = null;
 
   // overlayEdge: hovering an inspector rule row lights up exactly that
   // line on the map — hot, with ports — on top of whatever state is drawn.
@@ -572,6 +570,9 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // DNS plumbing: edges into cluster DNS, or whose only ports are 53.
+  // Permanently excluded from the overview texture (it's undifferentiated
+  // background noise — every namespace talks to DNS); still shown honestly
+  // when a specific pod is interrogated.
   function isDNS(e){
     if (e.d.endsWith("/kube-dns") || e.d.endsWith("/coredns")) return true;
     return e.ports.length > 0 && e.ports.every(p => p.startsWith("53/"));
@@ -582,7 +583,7 @@ const DATA = __PORTOLAN_DATA__;
     const agg = new Map();
     DATA.edges.forEach(e => {
       if (!e.cross) return;
-      if (hideDNS && isDNS(e)) return;
+      if (isDNS(e)) return;
       const a = nodeNS(e.s), b = nodeNS(e.d);
       if (!visibleNS(a) || !visibleNS(b)) return;
       const key = a+"|"+b;
@@ -724,9 +725,6 @@ const DATA = __PORTOLAN_DATA__;
   [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
     if (e.key === "Enter") runQuery();
   }));
-  $("#dns").addEventListener("click", function(){
-    hideDNS = !hideDNS; this.setAttribute("aria-pressed", String(hideDNS)); redraw();
-  });
   $("#audit").addEventListener("click", function(){
     auditMode = !auditMode; this.setAttribute("aria-pressed", String(auditMode));
     if (auditMode) { pinned = hovered = focusNS = queryPair = null; renderAudit(); redraw(); }
@@ -760,9 +758,6 @@ const DATA = __PORTOLAN_DATA__;
     pinned = hovered = focusNS = queryPair = null;
     $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
     inspectHome(); redraw();
-  });
-  $("#xonly").addEventListener("click", function(){
-    xonly = !xonly; this.setAttribute("aria-pressed", String(xonly)); redraw();
   });
   $("#search").addEventListener("input", function(){
     query = this.value.trim().toLowerCase(); redraw();
