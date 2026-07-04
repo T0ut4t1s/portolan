@@ -50,6 +50,17 @@
   .search{flex:1 1 220px;max-width:340px;background:var(--surface);border:1px solid var(--line);
     border-radius:999px;padding:8px 15px;font:inherit;font-size:.85rem;color:var(--ink);}
   .search:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .pq{display:flex;align-items:center;gap:6px;}
+  .pq-in{flex:0 1 190px;font-family:var(--mono);font-size:.76rem;}
+  .pq-arrow{font-family:var(--mono);color:var(--faint);}
+  .verdict{margin-top:10px;border-radius:9px;padding:9px 12px;font-size:.8rem;font-weight:600;}
+  .verdict.ok{background:var(--allow-soft);color:var(--allow);border:1px solid var(--allow);}
+  .verdict.bad{background:var(--deny-soft);color:var(--deny);border:1px solid var(--deny);}
+  .verdict.none{background:var(--surface-2);color:var(--muted);border:1px solid var(--line-2);}
+  .ctx{margin-top:10px;font-size:.74rem;color:var(--muted);}
+  .ctx b{color:var(--ink-2);font-family:var(--mono);font-weight:600;}
+  .ctx ul{margin:4px 0 0;padding-left:16px;}
+  .ctx li{font-family:var(--mono);font-size:.72rem;margin:2px 0;word-break:break-all;}
   .btn{background:var(--surface);border:1px solid var(--line);border-radius:999px;
     padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
   .btn:hover{border-color:var(--line-2)}
@@ -158,6 +169,13 @@
 <div class="warnbar" id="warnbar" hidden></div>
 <div class="controls">
   <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
+  <span class="pq">
+    <input class="search pq-in" id="qa" list="nodelist" placeholder="passage: from…" aria-label="Passage source">
+    <span class="pq-arrow">→</span>
+    <input class="search pq-in" id="qb" list="nodelist" placeholder="to…" aria-label="Passage destination">
+    <button class="btn" id="qgo">check</button>
+  </span>
+  <datalist id="nodelist"></datalist>
   <button class="btn" id="xonly" aria-pressed="true">cross-namespace only</button>
   <button class="btn" id="reset">reset</button>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
@@ -323,7 +341,85 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // ---------- view state ----------
-  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "";
+  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "", queryPair = null;
+
+  // ---------- passage query ----------
+  const nodelist = $("#nodelist");
+  [...wlById.keys(), ...extById.keys()].sort().forEach(id => {
+    const o = document.createElement("option"); o.value = id; nodelist.appendChild(o);
+  });
+  function resolveNode(text){
+    const t = text.trim();
+    if (!t) return null;
+    if (wlById.has(t) || extById.has(t)) return t;
+    // forgiving match: unique workload whose name equals or contains the text
+    const hits = [...wlById.keys()].filter(id =>
+      id.endsWith("/" + t) || id.split("/")[1]?.includes(t));
+    return hits.length === 1 ? hits[0] : null;
+  }
+  function findEdge(a, b){
+    return (edgesByNode.get(a) || []).find(e => e.s === a && e.d === b) || null;
+  }
+  function sideDesc(declared, broad){
+    if (declared && broad) return "covered by a broad allowance (cluster/all)";
+    if (declared) return "declared per-peer";
+    return "not declared";
+  }
+  function passageCard(a, b){
+    const e = findEdge(a, b);
+    const rev = findEdge(b, a);
+    let body = `<p class="insp-kicker">passage check</p>
+      <p class="insp-title">${esc(a)} → ${esc(b)}</p>`;
+    if (e && halfOpen(e)) {
+      body += `<div class="verdict bad">HALF-OPEN — dropped at the receiver</div>
+        <div class="ctx">Egress is ${esc(sideDesc(true, e.beg))} by:
+        <ul>${e.policies.map(p => `<li>${esc(p)}</li>`).join("")}</ul>
+        …but <b>${esc(nodeNS(b) || b)}</b> is default-deny and no ingress rule accepts this
+        passage. Add an ingress allow on the receiving side (this is the
+        classic one-sided CNP bug).</div>`;
+    } else if (e) {
+      body += `<div class="verdict ok">PASSAGE DECLARED · ${e.ports.map(esc).join(" ")}</div>
+        <div class="ctx">
+          egress side: <b>${esc(sideDesc(e.eg, e.beg))}</b><br>
+          ingress side: <b>${esc(sideDesc(e.in, e.bin))}</b>
+          <ul>${e.policies.map(p => `<li>${esc(p)}</li>`).join("")}</ul>
+          Declared topology only — for an enforcement verdict, use
+          <b>portolan whatif</b> (roadmap).</div>`;
+    } else {
+      const out = (edgesByNode.get(a) || []).filter(x => x.s === a);
+      const inn = (edgesByNode.get(b) || []).filter(x => x.d === b);
+      const broadOut = out.some(x => x.beg || ["entity:cluster","entity:all"].includes(x.d));
+      body += `<div class="verdict none">NO DECLARED PASSAGE</div>
+        <div class="ctx">
+        ${rev ? `Note: the <b>reverse</b> passage ${esc(b)} → ${esc(a)} exists.<br>` : ""}
+        ${broadOut ? `<b>${esc(a)}</b> holds a broad egress allowance, so if this fails
+          in practice the gap is likely on the receiving side.<br>` : ""}
+        <b>${esc(a)}</b> may reach:
+        <ul>${out.slice(0,8).map(x => `<li>${esc(x.d)} ${esc(x.ports.join(","))}</li>`).join("") || "<li>nothing declared</li>"}</ul>
+        <b>${esc(b)}</b> accepts from:
+        <ul>${inn.slice(0,8).map(x => `<li>${esc(x.s)} ${esc(x.ports.join(","))}</li>`).join("") || "<li>nothing declared</li>"}</ul>
+        The missing rule goes in whichever side's list should contain the other.</div>`;
+    }
+    insp.innerHTML = body;
+  }
+  function drawPair(pair){
+    const [a, b] = pair;
+    [a, b].forEach(id => {
+      const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
+                rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+      if (c) c.classList.add("sel");
+    });
+    const e = findEdge(a, b);
+    if (e) {
+      const ea = elFor(a), eb = elFor(b);
+      if (ea && eb) drawPath(anchor(ea), anchor(eb),
+        "edge hot" + (halfOpen(e) ? " half" : ""), e.ports.slice(0,2).join(","));
+    }
+    grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel")) card.classList.add("has-active");
+    });
+    passageCard(a, b);
+  }
 
   function visibleNS(name){
     if (!query) return true;
@@ -339,11 +435,12 @@ const DATA = __PORTOLAN_DATA__;
       <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
 
     const active = pinned || hovered;
-    document.body.classList.toggle("dimming", !!(active || focusNS));
+    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
 
+    if (queryPair) return drawPair(queryPair);
     if (active) return drawNode(active);
     if (focusNS) return drawFocus(focusNS);
     drawOverview();
@@ -470,13 +567,28 @@ const DATA = __PORTOLAN_DATA__;
   });
   grid.addEventListener("click", e => {
     const chip = e.target.closest(".chip");
-    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; redraw(); return; }
+    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; redraw(); return; }
     const head = e.target.closest(".ns-head");
     if (head) {
       const ns = head.parentElement.dataset.ns;
-      focusNS = focusNS === ns ? null : ns; pinned = null; redraw();
+      focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; redraw();
     }
   });
+  function runQuery(){
+    const a = resolveNode($("#qa").value), b = resolveNode($("#qb").value);
+    if (!a || !b) {
+      insp.innerHTML = `<p class="insp-kicker">passage check</p>
+        <p class="insp-title">node not found</p>
+        <p class="empty">Type a workload as <b>namespace/name</b> (autocomplete helps), or a
+        unique short name. ${!a ? "Source" : "Destination"} didn't resolve.</p>`;
+      return;
+    }
+    queryPair = [a, b]; pinned = null; hovered = null; focusNS = null; redraw();
+  }
+  $("#qgo").addEventListener("click", runQuery);
+  [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
+    if (e.key === "Enter") runQuery();
+  }));
   grid.addEventListener("keydown", e => {
     if (e.key === "Enter" && e.target.closest(".ns-head")) e.target.closest(".ns-head").click();
   });
@@ -484,7 +596,11 @@ const DATA = __PORTOLAN_DATA__;
     const x = e.target.closest(".ext");
     if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; redraw(); }
   });
-  $("#reset").addEventListener("click", () => { pinned = hovered = focusNS = null; $("#search").value=""; query=""; applyFilter(); redraw(); });
+  $("#reset").addEventListener("click", () => {
+    pinned = hovered = focusNS = queryPair = null;
+    $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
+    applyFilter(); inspectHome(); redraw();
+  });
   $("#xonly").addEventListener("click", function(){
     xonly = !xonly; this.setAttribute("aria-pressed", String(xonly)); redraw();
   });
