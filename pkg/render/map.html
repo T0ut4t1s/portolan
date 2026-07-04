@@ -347,24 +347,38 @@ const DATA = __PORTOLAN_DATA__;
         || grid.querySelector(`.ns[data-ns="${CSS.escape(nodeNS(id)||id)}"]`)
         || rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
   }
-  function border(a, tx, ty){
-    const dx = tx-a.x, dy = ty-a.y;
-    if (!dx && !dy) return {x:a.x, y:a.y};
-    const s = 1/Math.max(Math.abs(dx)/(a.w/2+4), Math.abs(dy)/(a.h/2+4));
-    return { x:a.x+dx*s, y:a.y+dy*s };
-  }
+  // Edges dock at edge midpoints — left/right for mostly-horizontal
+  // connections, top/bottom for mostly-vertical — so the curve's arrival
+  // tangent always matches its anchor and arrowheads point where the
+  // line actually goes (a ray-anchored point with a horizontal-tangent
+  // bezier scatters arrows around the perimeter).
   function drawPath(a, b, cls, label){
-    const p0 = border(a, b.x, b.y), p1 = border(b, a.x, a.y);
-    const mx = (p0.x+p1.x)/2, my=(p0.y+p1.y)/2;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    let p0, p1, d, lx, ly;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const s = dx >= 0 ? 1 : -1;
+      p0 = { x: a.x + s * (a.w / 2 + 4), y: a.y };
+      p1 = { x: b.x - s * (b.w / 2 + 6), y: b.y };
+      const mx = (p0.x + p1.x) / 2;
+      d = `M${p0.x},${p0.y} C${mx},${p0.y} ${mx},${p1.y} ${p1.x},${p1.y}`;
+      lx = mx; ly = (p0.y + p1.y) / 2 - 3;
+    } else {
+      const s = dy >= 0 ? 1 : -1;
+      p0 = { x: a.x, y: a.y + s * (a.h / 2 + 4) };
+      p1 = { x: b.x, y: b.y - s * (b.h / 2 + 6) };
+      const my = (p0.y + p1.y) / 2;
+      d = `M${p0.x},${p0.y} C${p0.x},${my} ${p1.x},${my} ${p1.x},${p1.y}`;
+      lx = (p0.x + p1.x) / 2; ly = my - 3;
+    }
     const path = document.createElementNS(SVGNS, "path");
     path.setAttribute("class", cls);
-    path.setAttribute("d", `M${p0.x},${p0.y} C${mx},${p0.y} ${mx},${p1.y} ${p1.x},${p1.y}`);
+    path.setAttribute("d", d);
     path.setAttribute("marker-end", "url(#ah)");
     svg.appendChild(path);
     if (label){
       const t = document.createElementNS(SVGNS, "text");
       t.setAttribute("class", "elabel " + cls.replace("edge","").trim());
-      t.setAttribute("x", mx); t.setAttribute("y", my-3);
+      t.setAttribute("x", lx); t.setAttribute("y", ly);
       t.textContent = label;
       svg.appendChild(t);
     }
