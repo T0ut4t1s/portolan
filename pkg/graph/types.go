@@ -13,6 +13,8 @@
 // counted in Graph.Warnings rather than silently dropped.
 package graph
 
+import "encoding/json"
+
 // Graph is the JSON document embedded into the rendered map.
 type Graph struct {
 	Cluster    string      `json:"cluster,omitempty"`
@@ -31,7 +33,12 @@ type Graph struct {
 	// workload — "policy → selector" — food for the audit view. May be
 	// intentional (scaled-down node, future pods) or a dead rule.
 	DeadRefs []string `json:"deadRefs,omitempty"`
-	Stats    Stats    `json:"stats"`
+	// PolicyRules carries each policy's rule payloads verbatim, keyed by
+	// the same provenance strings edges use — the inspector's "show me the
+	// actual policy" escape hatch. Resolved effects stay the primary view;
+	// this is the raw source for the few moments that need it.
+	PolicyRules map[string][]json.RawMessage `json:"policyRules,omitempty"`
+	Stats       Stats                        `json:"stats"`
 }
 
 // Namespace groups the workload nodes it contains.

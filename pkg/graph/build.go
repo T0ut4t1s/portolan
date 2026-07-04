@@ -590,9 +590,17 @@ func cidrs(set []cidrRule) []string {
 
 func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]int) *Graph {
 	g := &Graph{
-		Cluster: b.snap.Cluster,
-		TakenAt: b.snap.TakenAt.Format("2006-01-02 15:04 UTC"),
-		Tool:    fmt.Sprintf("%s %s", b.snap.Tool.Name, b.snap.Tool.Version),
+		Cluster:     b.snap.Cluster,
+		TakenAt:     b.snap.TakenAt.Format("2006-01-02 15:04 UTC"),
+		Tool:        fmt.Sprintf("%s %s", b.snap.Tool.Name, b.snap.Tool.Version),
+		PolicyRules: make(map[string][]json.RawMessage, len(b.snap.Policies)),
+	}
+	for _, pol := range b.snap.Policies {
+		key := fmt.Sprintf("%s/%s", pol.Kind, pol.Name)
+		if pol.Namespace != "" {
+			key = fmt.Sprintf("%s/%s/%s", pol.Kind, pol.Namespace, pol.Name)
+		}
+		g.PolicyRules[key] = pol.Rules
 	}
 
 	for _, ns := range b.snap.Namespaces {
