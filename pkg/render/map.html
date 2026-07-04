@@ -176,6 +176,7 @@
   .pol:hover{color:var(--accent);}
   .polmodal{position:fixed;inset:0;z-index:50;background:rgba(10,12,26,.55);
     display:flex;align-items:center;justify-content:center;padding:24px;}
+  .polmodal[hidden]{display:none;} /* display:flex would otherwise defeat the hidden attribute */
   .polmodal-card{background:var(--surface);border:1px solid var(--line-2);border-radius:14px;
     box-shadow:var(--shadow);max-width:720px;width:100%;max-height:82vh;
     display:flex;flex-direction:column;overflow:hidden;}
