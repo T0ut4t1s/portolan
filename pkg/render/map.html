@@ -485,6 +485,13 @@ const DATA = __PORTOLAN_DATA__;
     let contract = null;
     if (pinned) contract = neighborhoodNS(pinned);
     else if (queryPair) contract = new Set(queryPair.map(nodeNS).filter(Boolean));
+    else if (focusNS) {
+      // Namespace focus contracts to the union of its workloads' neighborhoods.
+      contract = new Set([focusNS]);
+      (nsByName.get(focusNS)?.workloads || []).forEach(w => {
+        neighborhoodNS(w.id).forEach(n => contract.add(n));
+      });
+    }
     grid.querySelectorAll(".ns").forEach(card => {
       const name = card.dataset.ns;
       const vis = visibleNS(name) && (!contract || contract.has(name));
