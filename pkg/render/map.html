@@ -704,6 +704,23 @@ const DATA = __PORTOLAN_DATA__;
     query = this.value.trim().toLowerCase(); redraw();
   });
 
+  // Click anywhere outside the interactive surfaces → back to the main view.
+  document.addEventListener("click", e => {
+    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar")) return;
+    if (pinned || focusNS || queryPair || auditMode) {
+      pinned = focusNS = queryPair = null;
+      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+      inspectHome(); redraw();
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && (pinned || focusNS || queryPair || auditMode)) {
+      pinned = focusNS = queryPair = null;
+      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+      inspectHome(); redraw();
+    }
+  });
+
   let raf;
   const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(redraw); };
   addEventListener("resize", schedule);
