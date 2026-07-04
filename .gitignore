@@ -2,10 +2,11 @@
 /portolan
 /dist/
 
-# local snapshots and rendered maps
+# local snapshots and rendered maps (root only — pkg/render/map.html is the
+# embedded UI template and must be tracked)
 *.snapshot.json
-snapshot.json
-map.html
+/snapshot.json
+/map.html
 
 # editor/OS noise
 .idea/

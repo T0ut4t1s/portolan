@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portolan — policy map</title>
+<style>
+  :root{
+    --bg:#e9ebf3; --stage:#f3f4fa; --surface:#ffffff; --surface-2:#f7f8fc;
+    --ink:#191b2b; --ink-2:#3a3d55; --muted:#63678a; --faint:#8a8ea8;
+    --line:#d7dae9; --line-2:#c6cae0;
+    --accent:#5b6cf0; --accent-soft:#e6e9ff;
+    --allow:#0f9c8c; --allow-soft:#d6f2ee;
+    --deny:#d83a40; --deny-soft:#fbe0e1;
+    --world:#a9741f; --world-soft:#f5e9d4;
+    --shadow:0 1px 2px rgba(24,28,60,.06),0 6px 18px rgba(24,28,60,.07);
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --ui:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  [data-theme="dark"]{
+    --bg:#0c0d16; --stage:#111324; --surface:#171a2c; --surface-2:#1c1f33;
+    --ink:#edeefb; --ink-2:#c3c6e2; --muted:#9498bd; --faint:#6b6f92;
+    --line:#262a45; --line-2:#333963;
+    --accent:#8b97ff; --accent-soft:#232848;
+    --allow:#2dd4bf; --allow-soft:#123330;
+    --deny:#ff6b70; --deny-soft:#3a1b1f;
+    --world:#e0b25a; --world-soft:#332a17;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 26px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
+
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 18px;margin-bottom:6px;}
+  h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;}
+  h1 b{color:var(--accent)}
+  .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    padding:7px 12px;box-shadow:var(--shadow);font-size:.72rem;color:var(--muted);}
+  .stat b{display:block;font-family:var(--mono);font-size:1.15rem;color:var(--ink);
+    font-variant-numeric:tabular-nums;font-weight:600;}
+
+  .warnbar{background:var(--world-soft);border:1px solid var(--world);border-radius:10px;
+    color:var(--ink-2);font-size:.78rem;padding:8px 12px;margin:0 0 12px;}
+  .warnbar b{color:var(--world)}
+
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 16px;}
+  .search{flex:1 1 220px;max-width:340px;background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:8px 15px;font:inherit;font-size:.85rem;color:var(--ink);}
+  .search:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .btn{background:var(--surface);border:1px solid var(--line);border-radius:999px;
+    padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
+  .btn:hover{border-color:var(--line-2)}
+  .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);}
+  .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);margin-left:auto;}
+
+  .layout{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:start;}
+  @media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+  .stage-wrap{position:relative;background:var(--stage);border:1px solid var(--line);
+    border-radius:16px;box-shadow:var(--shadow);padding:18px;}
+  .stage{position:relative;}
+  #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;}
+  .grid{position:relative;z-index:2;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
+
+  .ns{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0;}
+  .ns.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+  .ns-head{display:flex;align-items:center;gap:6px;cursor:pointer;min-width:0;}
+  .ns-name{font-family:var(--mono);font-size:.74rem;font-weight:600;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+  .deny{font-family:var(--mono);font-size:.56rem;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--deny);background:var(--deny-soft);border-radius:5px;padding:2px 5px;font-weight:700;flex:none;}
+  .chips{display:flex;flex-direction:column;gap:6px;}
+  .chip{font-family:var(--mono);text-align:left;cursor:pointer;background:var(--surface-2);
+    border:1px solid var(--line);border-left:3px solid var(--faint);border-radius:8px;
+    padding:6px 9px;color:var(--ink);font-size:.78rem;display:flex;justify-content:space-between;
+    gap:6px;align-items:baseline;transition:opacity .15s,border-color .15s;min-width:0;}
+  .chip .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip .kd{font-size:.6rem;color:var(--faint);text-transform:uppercase;flex:none;}
+  .chip:hover{border-color:var(--line-2)}
+  .chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+  .chip[data-kind="Deployment"]{border-left-color:var(--accent)}
+  .chip[data-kind="StatefulSet"]{border-left-color:#7b83c4}
+  .chip[data-kind="DaemonSet"]{border-left-color:var(--allow)}
+  .chip[data-kind="CronJob"],.chip[data-kind="Job"]{border-left-color:var(--world)}
+  .chip.sel{border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent) inset;}
+  .chip.adj{border-color:var(--allow);}
+  body.dimming .chip:not(.sel):not(.adj){opacity:.3;}
+  body.dimming .ns:not(.has-active){opacity:.45;}
+
+  .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
+  .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
+    border:1px solid var(--world);border-radius:8px;padding:5px 9px;cursor:pointer;}
+  .ext[data-kind="cidr"]{background:var(--surface-2);border-color:var(--line-2);}
+  .ext.sel{outline:2px solid var(--accent);}
+  body.dimming .ext:not(.sel):not(.adj){opacity:.35;}
+
+  .quiet{margin-top:14px;font-size:.76rem;color:var(--faint);}
+  .quiet b{color:var(--muted)}
+
+  .edge{fill:none;stroke:var(--accent);stroke-width:1.5;opacity:.45;}
+  .edge.agg{stroke-width:2;}
+  .edge.hot{stroke:var(--allow);stroke-width:2.4;opacity:1;}
+  .edge.ext{stroke:var(--world);}
+  .edge.half{stroke:var(--deny);stroke-dasharray:6 5;}
+  .elabel{font-family:var(--mono);font-size:10px;font-weight:600;fill:var(--muted);
+    paint-order:stroke;stroke:var(--stage);stroke-width:4;stroke-linejoin:round;text-anchor:middle;}
+  .elabel.hot{fill:var(--allow);font-size:11px;}
+  .elabel.half{fill:var(--deny);}
+
+  .inspector{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);padding:16px;position:sticky;top:14px;font-size:.84rem;}
+  .insp-kicker{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 4px;}
+  .insp-title{font-family:var(--mono);font-size:1.05rem;font-weight:600;margin:0;word-break:break-all;}
+  .insp-sub{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin:2px 0 0;}
+  .half-warn{margin-top:10px;background:var(--deny-soft);border:1px solid var(--deny);
+    border-radius:8px;padding:7px 10px;font-size:.76rem;color:var(--ink-2);}
+  .half-warn b{color:var(--deny)}
+  .rgroup{margin-top:14px;}
+  .rgroup h4{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-2);margin:0 0 6px;}
+  .rule{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    padding:6px 0;border-top:1px solid var(--line);}
+  .rule .peer{font-family:var(--mono);font-size:.78rem;min-width:0;}
+  .rule .peer small{display:block;color:var(--faint);font-size:.64rem;word-break:break-all;}
+  .rule .ports{font-family:var(--mono);font-size:.72rem;color:var(--allow);font-weight:600;
+    background:var(--allow-soft);border-radius:6px;padding:1px 6px;white-space:nowrap;flex:none;}
+  .tag{font-family:var(--mono);font-size:.55rem;border-radius:4px;padding:1px 4px;margin-left:5px;
+    font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+  .tag.x{color:var(--accent);background:var(--accent-soft);}
+  .tag.l7{color:var(--world);background:var(--world-soft);}
+  .tag.half{color:var(--deny);background:var(--deny-soft);}
+  .empty{color:var(--muted);margin-top:14px;}
+
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px;
+    font-family:var(--mono);font-size:.72rem;color:var(--muted);}
+  .lk{display:inline-block;width:20px;border-top:2.5px solid var(--accent);vertical-align:middle;margin-right:5px;}
+  .lk.hot{border-color:var(--allow)}
+  .lk.ext{border-color:var(--world)}
+  .lk.half{border-color:var(--deny);border-top-style:dashed}
+
+  footer{margin-top:18px;font-size:.74rem;color:var(--faint);}
+  footer a{color:var(--accent)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1><b>Portolan</b> policy map</h1>
+  <span class="meta" id="meta"></span>
+</header>
+<div class="stats" id="stats"></div>
+<div class="warnbar" id="warnbar" hidden></div>
+<div class="controls">
+  <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
+  <button class="btn" id="xonly" aria-pressed="true">cross-namespace only</button>
+  <button class="btn" id="reset">reset</button>
+  <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
+  <span class="hint">hover a workload · click to pin · click a namespace to focus</span>
+</div>
+
+<div class="layout">
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <div class="grid" id="grid"></div>
+      <svg id="edges" aria-hidden="true"></svg>
+    </div>
+    <div class="rail" id="rail"></div>
+    <div class="quiet" id="quiet" hidden></div>
+    <div class="legend">
+      <span><i class="lk"></i>namespace-level allow (aggregated)</span>
+      <span><i class="lk hot"></i>selected workload's edges</span>
+      <span><i class="lk ext"></i>to entity / CIDR / FQDN</span>
+      <span><i class="lk half"></i>half-open: one side missing into default-deny</span>
+    </div>
+  </div>
+  <aside class="inspector" id="inspector"></aside>
+</div>
+<footer>Generated by <span id="tool"></span> — declared policy topology (visualization-grade; verdicts belong to <a href="https://github.com/T0ut4t1s/portolan">portolan whatif</a>).</footer>
+
+<script>
+const DATA = __PORTOLAN_DATA__;
+(function(){
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const SVGNS = "http://www.w3.org/2000/svg";
+
+  // ---------- theme ----------
+  const root = document.documentElement;
+  const savedTheme = localStorage.getItem("portolan-theme");
+  root.dataset.theme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  $("#theme").addEventListener("click", () => {
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("portolan-theme", root.dataset.theme);
+  });
+
+  // ---------- indexes ----------
+  const nsByName = new Map(DATA.namespaces.map(n => [n.name, n]));
+  const wlById = new Map();
+  DATA.namespaces.forEach(n => n.workloads.forEach(w => wlById.set(w.id, w)));
+  const extById = new Map(DATA.externals.map(e => [e.id, e]));
+  const nodeNS = id => id.includes("/") ? id.split("/")[0] : null;
+
+  const edgesByNode = new Map();
+  DATA.edges.forEach(e => {
+    [e.s, e.d].forEach(id => {
+      if (!edgesByNode.has(id)) edgesByNode.set(id, []);
+      edgesByNode.get(id).push(e);
+    });
+  });
+
+  // Half-open: sender declared egress (a real per-peer rule, not a broad
+  // allowance), but the default-deny receiving side never declared ingress —
+  // traffic is allowed out and dropped on arrival. The mirror case (receiver
+  // permissive, sender silent) is normal intentional design and NOT flagged.
+  function halfOpen(e){
+    const sNS = nodeNS(e.s), dNS = nodeNS(e.d);
+    if (!sNS || !dNS) return false;
+    return e.eg && !e.beg && !e.in && !!nsByName.get(dNS)?.defaultDeny;
+  }
+
+  // Namespaces with any incident edge or any policy are "active".
+  const activeNS = new Set();
+  DATA.edges.forEach(e => { const a=nodeNS(e.s), b=nodeNS(e.d); if(a)activeNS.add(a); if(b)activeNS.add(b); });
+  DATA.namespaces.forEach(n => { if (n.policyCount > 0 || n.workloads.length > 0 && activeNS.has(n.name)) activeNS.add(n.name); });
+
+  // ---------- header ----------
+  $("#meta").textContent = (DATA.cluster ? DATA.cluster + " · " : "") + DATA.takenAt;
+  $("#tool").textContent = DATA.tool;
+  const half = DATA.edges.filter(halfOpen).length;
+  const statDefs = [
+    [DATA.stats.namespaces, "namespaces"],
+    [DATA.stats.workloads, "workloads"],
+    [DATA.stats.policies, "policies"],
+    [DATA.stats.edges, "allow edges"],
+    [DATA.stats.crossEdges, "cross-namespace"],
+    [half, "half-open"],
+  ];
+  $("#stats").innerHTML = statDefs.map(([v,l]) => `<div class="stat"><b>${v}</b>${l}</div>`).join("");
+  if (DATA.warnings && DATA.warnings.length) {
+    const w = $("#warnbar");
+    w.hidden = false;
+    w.innerHTML = "<b>Not rendered:</b> " + DATA.warnings.map(esc).join(" · ");
+  }
+
+  function esc(s){ const d=document.createElement("i"); d.textContent=s; return d.innerHTML; }
+
+  // ---------- cards ----------
+  const grid = $("#grid");
+  const sortedNS = [...DATA.namespaces].sort((a,b) =>
+    (activeNS.has(b.name)-0) - (activeNS.has(a.name)-0) || a.name.localeCompare(b.name));
+  const quiet = [];
+  sortedNS.forEach(ns => {
+    if (!activeNS.has(ns.name) || ns.workloads.length === 0 && ns.policyCount === 0) { quiet.push(ns.name); return; }
+    const card = document.createElement("div");
+    card.className = "ns"; card.dataset.ns = ns.name;
+    card.innerHTML = `<div class="ns-head" role="button" tabindex="0">
+        <span class="ns-name">${esc(ns.name)}</span>
+        ${ns.defaultDeny ? '<span class="deny">deny</span>' : ""}
+      </div><div class="chips"></div>`;
+    const chips = card.querySelector(".chips");
+    ns.workloads.forEach(w => {
+      const c = document.createElement("button");
+      c.className = "chip"; c.dataset.id = w.id; c.dataset.kind = w.kind;
+      c.innerHTML = `<span class="nm">${esc(w.name)}</span><span class="kd">${esc(w.kind)}${w.replicas>1?"×"+w.replicas:""}</span>`;
+      chips.appendChild(c);
+    });
+    grid.appendChild(card);
+  });
+  if (quiet.length) {
+    const q = $("#quiet"); q.hidden = false;
+    q.innerHTML = `<b>${quiet.length} quiet namespaces</b> (no policies or edges): ` + quiet.map(esc).join(", ");
+  }
+
+  const rail = $("#rail");
+  DATA.externals.forEach(x => {
+    const b = document.createElement("button");
+    b.className = "ext"; b.dataset.id = x.id; b.dataset.kind = x.kind;
+    b.textContent = (x.kind === "entity" ? "⬡ " : x.kind === "fqdn" ? "＠" : "▧ ") + x.name;
+    rail.appendChild(b);
+  });
+
+  // ---------- geometry ----------
+  const stage = $("#stage");
+  const svg = $("#edges");
+  function anchor(el){
+    const s = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2,
+             w: r.width, h: r.height,
+             left: r.left - s.left, top: r.top - s.top };
+  }
+  function elFor(id){
+    return grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`)
+        || grid.querySelector(`.ns[data-ns="${CSS.escape(nodeNS(id)||id)}"]`)
+        || rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+  }
+  function border(a, tx, ty){
+    const dx = tx-a.x, dy = ty-a.y;
+    if (!dx && !dy) return {x:a.x, y:a.y};
+    const s = 1/Math.max(Math.abs(dx)/(a.w/2+4), Math.abs(dy)/(a.h/2+4));
+    return { x:a.x+dx*s, y:a.y+dy*s };
+  }
+  function drawPath(a, b, cls, label){
+    const p0 = border(a, b.x, b.y), p1 = border(b, a.x, a.y);
+    const mx = (p0.x+p1.x)/2, my=(p0.y+p1.y)/2;
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("class", cls);
+    path.setAttribute("d", `M${p0.x},${p0.y} C${mx},${p0.y} ${mx},${p1.y} ${p1.x},${p1.y}`);
+    path.setAttribute("marker-end", "url(#ah)");
+    svg.appendChild(path);
+    if (label){
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("class", "elabel " + cls.replace("edge","").trim());
+      t.setAttribute("x", mx); t.setAttribute("y", my-3);
+      t.textContent = label;
+      svg.appendChild(t);
+    }
+  }
+
+  // ---------- view state ----------
+  let pinned = null, hovered = null, focusNS = null, xonly = true, query = "";
+
+  function visibleNS(name){
+    if (!query) return true;
+    const ns = nsByName.get(name);
+    return name.includes(query) || ns.workloads.some(w => w.name.includes(query));
+  }
+
+  function redraw(){
+    const rect = stage.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
+      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
+
+    const active = pinned || hovered;
+    document.body.classList.toggle("dimming", !!(active || focusNS));
+    grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
+    rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
+    grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
+
+    if (active) return drawNode(active);
+    if (focusNS) return drawFocus(focusNS);
+    drawOverview();
+  }
+
+  function drawOverview(){
+    // Aggregate cross-namespace workload edges to namespace level.
+    const agg = new Map();
+    DATA.edges.forEach(e => {
+      if (!e.cross) return;
+      const a = nodeNS(e.s), b = nodeNS(e.d);
+      if (!visibleNS(a) || !visibleNS(b)) return;
+      const key = a+"|"+b;
+      const cur = agg.get(key) || { n:0, half:false };
+      cur.n++; cur.half = cur.half || halfOpen(e);
+      agg.set(key, cur);
+    });
+    agg.forEach((v, key) => {
+      const [a,b] = key.split("|");
+      const ea = grid.querySelector(`.ns[data-ns="${CSS.escape(a)}"]`);
+      const eb = grid.querySelector(`.ns[data-ns="${CSS.escape(b)}"]`);
+      if (!ea || !eb) return;
+      drawPath(anchor(ea), anchor(eb), "edge agg" + (v.half ? " half" : ""), v.n > 1 ? String(v.n) : "");
+    });
+  }
+
+  function drawNode(id){
+    const el = elFor(id);
+    if (el && el.classList.contains("chip")) el.classList.add("sel");
+    if (el && el.classList.contains("ext")) el.classList.add("sel");
+    (edgesByNode.get(id) || []).forEach(e => {
+      if (xonly && !e.cross && nodeNS(e.s) && nodeNS(e.d)) { /* still show on selection */ }
+      const other = e.s === id ? e.d : e.s;
+      const eo = elFor(other), es = elFor(id);
+      if (!eo || !es) return;
+      const oChip = grid.querySelector(`.chip[data-id="${CSS.escape(other)}"]`) ||
+                    rail.querySelector(`.ext[data-id="${CSS.escape(other)}"]`);
+      if (oChip) oChip.classList.add("adj");
+      const cls = "edge hot" + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext");
+      const a = e.s === id ? anchor(es) : anchor(eo);
+      const b = e.s === id ? anchor(eo) : anchor(es);
+      drawPath(a, b, cls, e.ports.slice(0,2).join(","));
+    });
+    grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+    });
+    inspect(id);
+  }
+
+  function drawFocus(ns){
+    const card = grid.querySelector(`.ns[data-ns="${CSS.escape(ns)}"]`);
+    if (card) { card.classList.add("focus","has-active"); }
+    const seen = new Set();
+    (nsByName.get(ns)?.workloads || []).forEach(w => {
+      (edgesByNode.get(w.id) || []).forEach(e => {
+        const key = e.s+"|"+e.d;
+        if (seen.has(key)) return; seen.add(key);
+        const es = elFor(e.s), ed = elFor(e.d);
+        if (!es || !ed) return;
+        [e.s, e.d].forEach(id => {
+          const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
+                    rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+          if (c) c.classList.add("adj");
+        });
+        drawPath(anchor(es), anchor(ed), "edge hot" + (halfOpen(e) ? " half" : ""), e.ports.slice(0,2).join(","));
+      });
+    });
+    grid.querySelectorAll(".ns").forEach(c => {
+      if (c.querySelector(".chip.adj")) c.classList.add("has-active");
+    });
+    inspectNS(ns);
+  }
+
+  // ---------- inspector ----------
+  const insp = $("#inspector");
+  function inspectHome(){
+    insp.innerHTML = `<p class="insp-kicker">Inspector</p>
+      <p class="insp-title">Select a workload</p>
+      <p class="insp-sub">hover · click to pin · click a namespace header to focus it</p>
+      <p class="empty">The overview shows cross-namespace allows aggregated per namespace pair.
+      Dashed red = half-open: one side declared, the other missing where default-deny would drop it.</p>`;
+  }
+  function ruleRow(peerId, e, dir){
+    const ext = !nodeNS(peerId);
+    const peer = ext ? (extById.get(peerId)?.name || peerId) : peerId;
+    const tags =
+      (e.cross ? '<span class="tag x">x-ns</span>' : "") +
+      (e.l7 ? '<span class="tag l7">L7</span>' : "") +
+      (halfOpen(e) ? '<span class="tag half">half</span>' : "");
+    return `<div class="rule"><span class="peer">${esc(peer)}${tags}
+      <small>${e.policies.map(esc).join("<br>")}</small></span>
+      <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
+  }
+  function inspect(id){
+    const wl = wlById.get(id), ext = extById.get(id);
+    const es = edgesByNode.get(id) || [];
+    const out = es.filter(e => e.s === id), inn = es.filter(e => e.d === id);
+    const halves = es.filter(halfOpen);
+    insp.innerHTML = `<p class="insp-kicker">${wl ? "workload" : "external"}</p>
+      <p class="insp-title">${esc(wl ? wl.name : (ext?.name || id))}</p>
+      <p class="insp-sub">${wl ? esc(nodeNS(id)) + " · " + esc(wl.kind) : esc(ext?.kind || "")}</p>
+      ${halves.length ? `<div class="half-warn"><b>${halves.length} half-open edge(s)</b> —
+        allowed on one side only; the default-deny far side will drop this traffic.</div>` : ""}
+      ${out.length ? `<div class="rgroup"><h4>→ may reach</h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
+      ${inn.length ? `<div class="rgroup"><h4>← reachable from</h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}
+      ${!out.length && !inn.length ? '<p class="empty">No edges — nothing declared for this node.</p>' : ""}`;
+  }
+  function inspectNS(name){
+    const ns = nsByName.get(name);
+    insp.innerHTML = `<p class="insp-kicker">namespace</p>
+      <p class="insp-title">${esc(name)}</p>
+      <p class="insp-sub">${ns.workloads.length} workloads · ${ns.policyCount} policies
+        ${ns.defaultDeny ? " · default-deny" : ""}</p>
+      <p class="empty">Showing every edge touching this namespace. Click the header again to unfocus.</p>`;
+  }
+
+  // ---------- interactions ----------
+  grid.addEventListener("mouseover", e => {
+    const chip = e.target.closest(".chip");
+    if (chip) { hovered = chip.dataset.id; redraw(); }
+  });
+  grid.addEventListener("mouseout", e => {
+    if (e.target.closest(".chip")) { hovered = null; redraw(); }
+  });
+  grid.addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; redraw(); return; }
+    const head = e.target.closest(".ns-head");
+    if (head) {
+      const ns = head.parentElement.dataset.ns;
+      focusNS = focusNS === ns ? null : ns; pinned = null; redraw();
+    }
+  });
+  grid.addEventListener("keydown", e => {
+    if (e.key === "Enter" && e.target.closest(".ns-head")) e.target.closest(".ns-head").click();
+  });
+  rail.addEventListener("click", e => {
+    const x = e.target.closest(".ext");
+    if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; redraw(); }
+  });
+  $("#reset").addEventListener("click", () => { pinned = hovered = focusNS = null; $("#search").value=""; query=""; applyFilter(); redraw(); });
+  $("#xonly").addEventListener("click", function(){
+    xonly = !xonly; this.setAttribute("aria-pressed", String(xonly)); redraw();
+  });
+  $("#search").addEventListener("input", function(){
+    query = this.value.trim().toLowerCase(); applyFilter(); redraw();
+  });
+  function applyFilter(){
+    grid.querySelectorAll(".ns").forEach(card => {
+      card.style.display = visibleNS(card.dataset.ns) ? "" : "none";
+    });
+  }
+
+  let raf;
+  const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(redraw); };
+  addEventListener("resize", schedule);
+  if (window.ResizeObserver) new ResizeObserver(schedule).observe(grid);
+
+  inspectHome();
+  redraw();
+})();
+</script>
+</body>
+</html>
