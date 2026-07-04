@@ -122,8 +122,8 @@
   .quiet{margin-top:14px;font-size:.76rem;color:var(--faint);}
   .quiet b{color:var(--muted)}
 
-  .edge{fill:none;stroke:var(--accent);stroke-width:1.4;opacity:.16;}
-  .edge.agg{stroke-width:1.6;opacity:.2;}
+  .edge{fill:none;stroke:var(--accent);stroke-width:1.4;opacity:.1;}
+  .edge.agg{stroke-width:1.6;opacity:.13;}
   /* mid: a committed-but-unspecific scope (namespace focus) — readable, calm */
   .edge.mid{stroke:var(--accent);stroke-width:1.8;opacity:.5;}
   /* hot: a specific pod under the cursor or pinned — full brightness */
@@ -137,7 +137,10 @@
   .elabel.half{fill:var(--deny);}
 
   .inspector{background:var(--surface);border:1px solid var(--line);border-radius:14px;
-    box-shadow:var(--shadow);padding:16px;position:sticky;top:14px;font-size:.84rem;}
+    box-shadow:var(--shadow);padding:16px;position:sticky;top:14px;font-size:.84rem;
+    max-height:calc(100vh - 28px);overflow-y:auto;overscroll-behavior:contain;}
+  .rule[data-es]{cursor:pointer;}
+  .rule[data-es]:hover{background:color-mix(in srgb, var(--allow-soft) 55%, transparent);}
   .insp-kicker{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
     color:var(--faint);margin:0 0 4px;}
   .insp-title{font-family:var(--mono);font-size:1.05rem;font-weight:600;margin:0;word-break:break-all;}
@@ -243,7 +246,9 @@ const DATA = __PORTOLAN_DATA__;
     /^(entity|cidr|fqdn):/.test(id) ? null : (id.includes("/") ? id.split("/")[0] : null);
 
   const edgesByNode = new Map();
+  const edgeByKey = new Map();
   DATA.edges.forEach(e => {
+    edgeByKey.set(e.s + "|" + e.d, e);
     [e.s, e.d].forEach(id => {
       if (!edgesByNode.has(id)) edgesByNode.set(id, []);
       edgesByNode.get(id).push(e);
@@ -367,7 +372,25 @@ const DATA = __PORTOLAN_DATA__;
 
   // ---------- view state ----------
   let pinned = null, hovered = null, focusNS = null, xonly = true, query = "", queryPair = null,
-      hideDNS = true, auditMode = false;
+      hideDNS = true, auditMode = false, hoverEdgeKey = null;
+
+  // overlayEdge: hovering an inspector rule row lights up exactly that
+  // line on the map — hot, with ports — on top of whatever state is drawn.
+  function overlayEdge(){
+    if (!hoverEdgeKey) return;
+    const e = edgeByKey.get(hoverEdgeKey);
+    if (!e) return;
+    const es = elFor(e.s), ed = elFor(e.d);
+    if (!es || !ed) return;
+    [e.s, e.d].forEach(id => {
+      const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
+                rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+      if (c) c.classList.add("adj");
+    });
+    drawPath(anchor(es), anchor(ed),
+      "edge hot" + (halfOpen(e) ? " half" : "") + (nodeNS(e.d) ? "" : " ext"),
+      e.ports.slice(0,2).join(","));
+  }
 
   // ---------- audit ----------
   function renderAudit(){
@@ -376,7 +399,7 @@ const DATA = __PORTOLAN_DATA__;
     const world = [...new Set(DATA.edges.filter(e => worldLike.has(e.s) && e.in).map(e => e.d))].sort();
     const noDeny = DATA.namespaces.filter(n => !n.defaultDeny && n.workloads.length).map(n => n.name);
     const dead = DATA.deadRefs || [];
-    const item = e => `<div class="rule"><span class="peer">
+    const item = e => `<div class="rule" data-es="${esc(e.s)}" data-ed="${esc(e.d)}"><span class="peer">
         <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(e.s)}" data-qb="${esc(e.d)}">check</button>
         ${esc(e.s)} → ${esc(e.d)}<small>${e.policies.map(esc).join("<br>")}</small></span>
         <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
@@ -464,7 +487,7 @@ const DATA = __PORTOLAN_DATA__;
     if (e) {
       const ea = elFor(a), eb = elFor(b);
       if (ea && eb) drawPath(anchor(ea), anchor(eb),
-        "edge hot" + (halfOpen(e) ? " half" : ""), e.ports.slice(0,2).join(","));
+        "edge mid" + (halfOpen(e) ? " half" : ""), "");
     }
     grid.querySelectorAll(".ns").forEach(card => {
       if (card.querySelector(".chip.sel")) card.classList.add("has-active");
@@ -517,8 +540,6 @@ const DATA = __PORTOLAN_DATA__;
       markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
 
-    // Hover wins over pin so you can peek at other pods inside a
-    // contracted neighborhood without losing the contraction.
     const active = hovered || pinned;
     document.body.classList.toggle("dimming", !!(active || focusNS || queryPair));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
@@ -526,10 +547,14 @@ const DATA = __PORTOLAN_DATA__;
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
     applyCardVisibility(); // contract BEFORE drawing so edge anchors are final
 
-    if (queryPair) return drawPair(queryPair);
-    if (active) return drawNode(active);
-    if (focusNS) return drawFocus(focusNS);
-    drawOverview();
+    // Brightness is earned by the cursor alone: hover = hot with ports;
+    // every committed filter (pin, query, namespace focus) = calm mid.
+    if (hovered) drawNode(hovered, true);
+    else if (queryPair) drawPair(queryPair);
+    else if (pinned) drawNode(pinned, false);
+    else if (focusNS) drawFocus(focusNS);
+    else drawOverview();
+    overlayEdge();
   }
 
   // DNS plumbing: edges into cluster DNS, or whose only ports are 53.
@@ -561,22 +586,22 @@ const DATA = __PORTOLAN_DATA__;
     });
   }
 
-  function drawNode(id){
+  function drawNode(id, hot){
     const el = elFor(id);
     if (el && el.classList.contains("chip")) el.classList.add("sel");
     if (el && el.classList.contains("ext")) el.classList.add("sel");
+    const tone = hot ? "edge hot" : "edge mid";
     (edgesByNode.get(id) || []).forEach(e => {
-      if (xonly && !e.cross && nodeNS(e.s) && nodeNS(e.d)) { /* still show on selection */ }
       const other = e.s === id ? e.d : e.s;
       const eo = elFor(other), es = elFor(id);
       if (!eo || !es) return;
       const oChip = grid.querySelector(`.chip[data-id="${CSS.escape(other)}"]`) ||
                     rail.querySelector(`.ext[data-id="${CSS.escape(other)}"]`);
       if (oChip) oChip.classList.add("adj");
-      const cls = "edge hot" + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext");
+      const cls = tone + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext");
       const a = e.s === id ? anchor(es) : anchor(eo);
       const b = e.s === id ? anchor(eo) : anchor(es);
-      drawPath(a, b, cls, e.ports.slice(0,2).join(","));
+      drawPath(a, b, cls, hot ? e.ports.slice(0,2).join(",") : "");
     });
     grid.querySelectorAll(".ns").forEach(card => {
       if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
@@ -626,7 +651,7 @@ const DATA = __PORTOLAN_DATA__;
       (e.cross ? '<span class="tag x">x-ns</span>' : "") +
       (e.l7 ? '<span class="tag l7">L7</span>' : "") +
       (halfOpen(e) ? '<span class="tag half">half</span>' : "");
-    return `<div class="rule"><span class="peer">${esc(peer)}${tags}
+    return `<div class="rule" data-es="${esc(e.s)}" data-ed="${esc(e.d)}"><span class="peer">${esc(peer)}${tags}
       <small>${e.policies.map(esc).join("<br>")}</small></span>
       <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
   }
@@ -700,6 +725,15 @@ const DATA = __PORTOLAN_DATA__;
     $("#qa").value = b.dataset.qa; $("#qb").value = b.dataset.qb;
     auditMode = false; $("#audit").setAttribute("aria-pressed","false");
     runQuery();
+  });
+  // hovering a rule row lights up its exact line on the map
+  insp.addEventListener("mouseover", e => {
+    const r = e.target.closest("[data-es]");
+    const k = r ? r.dataset.es + "|" + r.dataset.ed : null;
+    if (k !== hoverEdgeKey) { hoverEdgeKey = k; redraw(); }
+  });
+  insp.addEventListener("mouseleave", () => {
+    if (hoverEdgeKey) { hoverEdgeKey = null; redraw(); }
   });
   grid.addEventListener("keydown", e => {
     if (e.key === "Enter" && e.target.closest(".ns-head")) e.target.closest(".ns-head").click();
