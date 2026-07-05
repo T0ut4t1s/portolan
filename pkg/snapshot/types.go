@@ -132,9 +132,9 @@ type FlowCapture struct {
 	// to a cluster workload (LAN broadcast chatter observed on node NICs)
 	// or Cilium health-check traffic. LostEvents counts events the Hubble
 	// pipeline itself dropped under load.
-	FlowsSeen  int `json:"flowsSeen"`
-	Skipped    int `json:"skipped,omitempty"`
-	LostEvents int `json:"lostEvents,omitempty"`
+	FlowsSeen  int        `json:"flowsSeen"`
+	Skipped    int        `json:"skipped,omitempty"`
+	LostEvents int        `json:"lostEvents,omitempty"`
 	Edges      []FlowEdge `json:"edges"`
 }
 
