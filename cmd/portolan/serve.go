@@ -43,6 +43,8 @@ func cmdServe(ctx context.Context, args []string) error {
 	keep := fs.Int("keep", 500, "snapshots to retain in the data directory")
 	clusterName := fs.String("cluster-name", "", "cluster label recorded in snapshots")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
+	flowWindow := fs.Duration("flows", 0, "capture Hubble flow observations over this look-back window each cycle, e.g. 15m (0: off)")
+	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,7 +65,7 @@ func cmdServe(ctx context.Context, args []string) error {
 
 	s := &server{}
 	collect := func() {
-		snap, err := col.Collect(ctx)
+		snap, err := col.Collect(ctx, snapshot.FlowOptions{Server: *hubbleServer, Window: *flowWindow})
 		if err != nil {
 			s.mu.Lock()
 			s.lastErr = err.Error()
@@ -105,6 +107,14 @@ func cmdServe(ctx context.Context, args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "collected: %d namespaces, %d workloads, %d policies, %d edges\n",
 			len(snap.Namespaces), len(snap.Workloads), len(snap.Policies), g.Stats.Edges)
+		if snap.Flows != nil {
+			if snap.Flows.Status == "ok" {
+				fmt.Fprintf(os.Stderr, "flows: %d edges from %d events over %s\n",
+					len(snap.Flows.Edges), snap.Flows.FlowsSeen, snap.Flows.Window)
+			} else {
+				fmt.Fprintf(os.Stderr, "flow capture failed (snapshot still valid): %s\n", snap.Flows.Reason)
+			}
+		}
 	}
 
 	collect()

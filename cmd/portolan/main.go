@@ -274,6 +274,8 @@ func cmdSnapshot(ctx context.Context, args []string) error {
 	out := fs.String("o", "snapshot.json", "output file (- for stdout)")
 	clusterName := fs.String("cluster-name", "", "optional cluster label recorded in the snapshot")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
+	flowWindow := fs.Duration("flows", 0, "also capture Hubble flow observations over this look-back window, e.g. 15m (0: off)")
+	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -287,7 +289,7 @@ func cmdSnapshot(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	snap, err := col.Collect(ctx)
+	snap, err := col.Collect(ctx, snapshot.FlowOptions{Server: *hubbleServer, Window: *flowWindow})
 	if err != nil {
 		return err
 	}
@@ -300,6 +302,9 @@ func cmdSnapshot(ctx context.Context, args []string) error {
 			skipped++
 			fmt.Fprintf(os.Stderr, "warning: %s skipped: %s\n", src.Kind, src.Reason)
 		}
+	}
+	if snap.Flows != nil && snap.Flows.Status != "ok" {
+		fmt.Fprintf(os.Stderr, "warning: flow capture failed (snapshot still valid): %s\n", snap.Flows.Reason)
 	}
 
 	var w io.Writer = os.Stdout
@@ -320,9 +325,18 @@ func cmdSnapshot(ctx context.Context, args []string) error {
 	if *out != "-" {
 		fmt.Fprintf(os.Stderr, "wrote %s: %d namespaces, %d workloads, %d policies (%d source(s) skipped)\n",
 			*out, len(snap.Namespaces), len(snap.Workloads), len(snap.Policies), skipped)
+		if snap.Flows != nil && snap.Flows.Status == "ok" {
+			fmt.Fprintf(os.Stderr, "flows: %d edges from %d events over %s (%d skipped as noise, %d lost by hubble)\n",
+				len(snap.Flows.Edges), snap.Flows.FlowsSeen, snap.Flows.Window, snap.Flows.Skipped, snap.Flows.LostEvents)
+		}
 	}
 	return nil
 }
+
+// defaultHubbleServer is the address of the Hubble Relay service in a
+// standard Cilium install, reachable from inside the cluster. Local runs
+// typically override it with a port-forward (e.g. localhost:4245).
+const defaultHubbleServer = "hubble-relay.kube-system.svc.cluster.local:80"
 
 // restConfig follows kubectl's precedence via client-go's deferred loader:
 // explicit --kubeconfig > $KUBECONFIG > ~/.kube/config, with the loader's

@@ -50,6 +50,13 @@ type Snapshot struct {
 	Namespaces []Namespace `json:"namespaces"`
 	Workloads  []Workload  `json:"workloads"`
 	Policies   []Policy    `json:"policies"`
+
+	// Flows carries optional traffic observations from Hubble Relay
+	// (--flows). Nil when flow capture was not requested. Flow data is
+	// inherently time-varying, so this section is exempt from the
+	// byte-identical determinism the policy sections guarantee — but edges
+	// are aggregated and sorted, so identical traffic yields identical edges.
+	Flows *FlowCapture `json:"flows,omitempty"`
 }
 
 // ToolInfo records provenance of the snapshot.
@@ -97,6 +104,70 @@ type Workload struct {
 	// Replicas counts live (non-terminal) pods behind this workload at
 	// capture time.
 	Replicas int `json:"replicas"`
+}
+
+// FlowCapture summarizes one bounded observation window read from Hubble
+// Relay. It is an OBSERVATION overlay, never an evaluation: it reports what
+// the datapath actually did, aggregated to workload granularity, alongside
+// enough honesty metadata to judge coverage (a relay ring buffer may not
+// span the whole requested window, and events can be lost under load).
+type FlowCapture struct {
+	// Status is "ok" or "error". On error the snapshot is still valid —
+	// flow capture degrades, it never aborts a policy capture.
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	// Server is the Hubble Relay address the capture came from.
+	Server string `json:"server,omitempty"`
+	// Window is the requested look-back (e.g. "15m"); From/To its bounds.
+	Window string    `json:"window"`
+	From   time.Time `json:"from,omitzero"`
+	To     time.Time `json:"to,omitzero"`
+	// OldestFlow is the earliest event actually returned. When it is
+	// noticeably later than From, the ring buffer did not cover the full
+	// window and absence of an edge means "not observed", not "did not
+	// happen" — even more than usual.
+	OldestFlow time.Time `json:"oldestFlow,omitzero"`
+	// FlowsSeen counts raw flow events consumed before aggregation.
+	// Skipped counts events ignored as noise: neither endpoint resolvable
+	// to a cluster workload (LAN broadcast chatter observed on node NICs)
+	// or Cilium health-check traffic. LostEvents counts events the Hubble
+	// pipeline itself dropped under load.
+	FlowsSeen  int `json:"flowsSeen"`
+	Skipped    int `json:"skipped,omitempty"`
+	LostEvents int `json:"lostEvents,omitempty"`
+	Edges      []FlowEdge `json:"edges"`
+}
+
+// FlowPeer identifies one side of an observed flow at the same granularity
+// as Workload: resolved controller identity when known. Exactly one of
+// (Namespace+Name) or Entity is set.
+type FlowPeer struct {
+	Namespace string `json:"namespace,omitempty"`
+	// Name is the resolved controller name (from Hubble's workload metadata
+	// or the live-pod index), or the pod name with Kind "Pod" when neither
+	// resolves — e.g. a pod that died before the snapshot.
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	// Entity is a Cilium reserved identity ("world", "host", "remote-node",
+	// "kube-apiserver", …) for non-pod peers.
+	Entity string `json:"entity,omitempty"`
+}
+
+// FlowEdge is one aggregated observation: Count events from Src to Dst on
+// Port with Verdict inside the capture window. Only the original direction
+// is counted (replies are filtered), so Port is the service port.
+type FlowEdge struct {
+	Src FlowPeer `json:"src"`
+	Dst FlowPeer `json:"dst"`
+	// Port like "8080/TCP", "53/UDP", "icmp"; empty when the flow had no L4.
+	Port string `json:"port,omitempty"`
+	// Verdict is "FORWARDED" or "DROPPED".
+	Verdict string `json:"verdict"`
+	// DropReason is Cilium's drop_reason_desc (e.g. "POLICY_DENIED") for
+	// DROPPED edges.
+	DropReason string    `json:"dropReason,omitempty"`
+	Count      int       `json:"count"`
+	LastSeen   time.Time `json:"lastSeen,omitzero"`
 }
 
 // Policy wraps one policy object. Rules carries the object's rule payloads

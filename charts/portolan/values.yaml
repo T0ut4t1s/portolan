@@ -10,6 +10,16 @@ keep: 500
 # Optional label recorded in every snapshot (shown in the map header).
 clusterName: ""
 
+# Optional Hubble flow observation. When window is set (e.g. "15m"), each
+# collection cycle also reads that look-back of flows from Hubble Relay and
+# records aggregated observed edges (incl. drops) in the snapshot. Needs
+# network reach to the relay — with default-deny egress, allow
+# kube-system/hubble-relay:4245. Coverage is bounded by Hubble's ring
+# buffer; the snapshot's flows.oldestFlow field reports the actual span.
+flows:
+  window: ""
+  server: "hubble-relay.kube-system.svc.cluster.local:80"
+
 service:
   port: 8080
 

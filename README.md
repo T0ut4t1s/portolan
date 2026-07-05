@@ -42,12 +42,17 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
   policies added/removed/changed and the derived allow-edges that appeared or
   vanished. `--exit-code` for pipelines.
+- **Observe** — `--flows 15m` reads a bounded look-back window from Hubble
+  Relay and records what the datapath actually did, aggregated to workload
+  granularity: observed edges, verdicts, and drop reasons (`POLICY_DENIED`
+  drops are misconfiguration leads). Flow peers resolve to the same
+  controller identities the policy map draws, so observed and declared edges
+  join cleanly. Honesty metadata included: if Hubble's ring buffer covered
+  less than the requested window, `flows.oldestFlow` says so.
 - **What-if** *(roadmap)* — feed it a draft policy and get the blast radius:
   which flows it newly permits, which observed drops it would fix, what it
   removes. Powered by Cilium's own policy engine, not a reimplementation — so
   verdicts match what the CNI will actually do.
-- **Observe** *(roadmap)* — overlay a bounded Hubble capture window on the map:
-  observed-vs-declared edges, drop highlighting, and unused-rule detection.
 
 ## What it deliberately does not do
 
@@ -84,6 +89,11 @@ in the mesh since Tuesday." No database — snapshots are immutable files.
 ```sh
 # Point at any cluster you can read (uses your kubeconfig, kubectl-style):
 portolan snapshot -o snapshot.json
+
+# Also capture what the datapath actually did (drops included) — needs
+# Hubble Relay; from outside the cluster, port-forward it first:
+#   kubectl -n kube-system port-forward svc/hubble-relay 4245:80
+portolan snapshot --flows 15m --hubble-server localhost:4245 -o snapshot.json
 
 # Keeping history? Timestamp the filenames — diffs between any two answer
 # "what changed":

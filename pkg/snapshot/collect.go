@@ -88,7 +88,12 @@ func NewCollector(cfg *rest.Config) (*Collector, error) {
 // A policy kind whose resource is not served by the cluster (e.g. Cilium
 // CRDs on a non-Cilium cluster) degrades gracefully and is recorded as
 // skipped in Snapshot.Sources; any other failure aborts the snapshot.
-func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
+//
+// When flows.Window > 0, a bounded window of Hubble flow observations is
+// captured afterwards (it needs the live-pod index the workload pass
+// builds). Flow capture failure degrades — recorded in Snapshot.Flows with
+// Status "error" — and never aborts the policy capture.
+func (c *Collector) Collect(ctx context.Context, flows FlowOptions) (*Snapshot, error) {
 	snap := &Snapshot{
 		SchemaVersion: SchemaVersion,
 		TakenAt:       time.Now().UTC(),
@@ -98,6 +103,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	var (
 		nss        []Namespace
 		wls        []Workload
+		podIdx     map[nsName]workloadRef
 		polResults = make([][]Policy, len(policySources))
 		statuses   = make([]SourceStatus, len(policySources))
 	)
@@ -110,7 +116,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	})
 	g.Go(func() error {
 		var err error
-		wls, err = c.collectWorkloads(gctx)
+		wls, podIdx, err = c.collectWorkloads(gctx)
 		return err
 	})
 	for i, src := range policySources {
@@ -143,6 +149,24 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	}
 
 	sortSnapshot(snap)
+
+	if flows.Window > 0 {
+		resolve := func(namespace, pod string) (string, string, bool) {
+			ref, ok := podIdx[nsName{namespace, pod}]
+			return ref.kind, ref.name, ok
+		}
+		fc, err := collectFlows(ctx, flows, resolve)
+		if err != nil {
+			fc = &FlowCapture{
+				Status: "error",
+				Reason: err.Error(),
+				Server: flows.Server,
+				Window: flows.Window.String(),
+				Edges:  []FlowEdge{},
+			}
+		}
+		snap.Flows = fc
+	}
 	return snap, nil
 }
 
@@ -185,12 +209,19 @@ func (c *Collector) collectNamespaces(ctx context.Context) ([]Namespace, error) 
 
 type nsName struct{ ns, name string }
 
+// workloadRef is a resolved controller identity, used by the live-pod index
+// that flow capture resolves peers against.
+type workloadRef struct{ kind, name string }
+
 // collectWorkloads lists live pods and resolves each to its topmost stable
 // controller identity using real ownerReferences: ReplicaSet → owning
 // Deployment, Job → owning CronJob. The owner maps come from metadata-only
 // ReplicaSet/Job lists — exact lineage, no name-suffix heuristics, so bare
 // ReplicaSets and Argo-Rollouts-style owners keep their true identity.
-func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
+//
+// The second return is the pod-level index (namespace/pod → resolved
+// identity) that flow capture uses to land flow peers on the same nodes.
+func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, map[nsName]workloadRef, error) {
 	rsToDeploy := map[nsName]string{}
 	err := c.eachMeta(ctx, gvrReplicaSets, metav1.ListOptions{}, func(item *metav1.PartialObjectMetadata) {
 		if ref := metav1.GetControllerOfNoCopy(item); ref != nil && ref.Kind == "Deployment" {
@@ -198,7 +229,7 @@ func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing replicasets: %w", err)
+		return nil, nil, fmt.Errorf("listing replicasets: %w", err)
 	}
 
 	jobToCron := map[nsName]string{}
@@ -208,7 +239,7 @@ func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing jobs: %w", err)
+		return nil, nil, fmt.Errorf("listing jobs: %w", err)
 	}
 
 	type gkey struct{ ns, kind, name string }
@@ -218,12 +249,14 @@ func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
 		replicas int
 	}
 	groups := map[gkey]*group{}
+	podIdx := map[nsName]workloadRef{}
 
 	// Terminal pods (Succeeded/Failed — completed Jobs, evicted pods) have
 	// no network presence; the field selector excludes them server-side.
 	podOpts := metav1.ListOptions{FieldSelector: "status.phase!=Succeeded,status.phase!=Failed"}
 	err = c.eachMeta(ctx, gvrPods, podOpts, func(item *metav1.PartialObjectMetadata) {
 		kind, name := resolveController(item, rsToDeploy, jobToCron)
+		podIdx[nsName{item.Namespace, item.Name}] = workloadRef{kind, name}
 		k := gkey{item.Namespace, kind, name}
 		g, ok := groups[k]
 		if !ok {
@@ -237,7 +270,7 @@ func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing pods: %w", err)
+		return nil, nil, fmt.Errorf("listing pods: %w", err)
 	}
 
 	out := make([]Workload, 0, len(groups))
@@ -250,7 +283,7 @@ func (c *Collector) collectWorkloads(ctx context.Context) ([]Workload, error) {
 			Replicas:  g.replicas,
 		})
 	}
-	return out, nil
+	return out, podIdx, nil
 }
 
 // resolveController maps a pod to its topmost stable controller identity.

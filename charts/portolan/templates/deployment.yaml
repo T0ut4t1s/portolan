@@ -49,6 +49,10 @@ spec:
             {{- if .Values.clusterName }}
             - --cluster-name={{ .Values.clusterName }}
             {{- end }}
+            {{- if .Values.flows.window }}
+            - --flows={{ .Values.flows.window }}
+            - --hubble-server={{ .Values.flows.server }}
+            {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
