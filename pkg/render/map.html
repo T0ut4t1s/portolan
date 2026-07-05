@@ -111,6 +111,17 @@
   .chip.adj{border-color:var(--allow);}
   body.dimming .chip:not(.sel):not(.adj){opacity:.3;}
   body.dimming .ns:not(.has-active){opacity:.45;}
+  /* Phantom chips: unmatched selectors, visible only behind the toggle. */
+  .chip.dead,.ext.dead{display:none;}
+  body.show-dead .chip.dead{display:flex;border-style:dashed;border-left-style:dashed;
+    border-left-color:var(--faint);color:var(--muted);}
+  body.show-dead .ext.dead{display:inline-block;border-style:dashed;
+    background:var(--surface-2);border-color:var(--line-2);color:var(--muted);}
+  .stat[data-goto]{cursor:pointer;}
+  .stat[data-goto]:hover{border-color:var(--accent);}
+  .stat.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+  .stat.push{margin-left:auto;}
+  .stats{align-items:stretch;}
 
   .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
   .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
@@ -131,6 +142,23 @@
   .edge.ext{stroke:var(--world);}
   .edge.half{stroke:var(--deny);stroke-dasharray:6 5;}
   .edge.agg.half{opacity:.5;}
+  /* Observed traffic: declared edges that carried real flows in the Hubble
+     window breathe — a slow dash-march in the direction of travel. */
+  .edge.obs{stroke-dasharray:7 5;animation:flowdash 1.1s linear infinite;}
+  .edge.agg.obs{opacity:.3;}
+  /* Ghost: traffic observed with NO declared per-pair edge (riding a broad
+     allowance or an unpolicied namespace) — dotted, neutral, honest. */
+  .edge.ghost{stroke:var(--muted);stroke-width:1.7;opacity:.65;
+    stroke-dasharray:2 4;stroke-linecap:round;animation:flowdash 1.3s linear infinite;}
+  /* Drop: the datapath denied this traffic inside the window — alert red. */
+  .edge.drop{stroke:var(--deny);stroke-width:2.4;opacity:.95;}
+  .elabel.drop{fill:var(--deny);}
+  .elabel.ghost{fill:var(--muted);}
+  /* Dead: a rule aimed at a selector matching no live workload — dashed,
+     faint, never animated (nothing flows, by definition). */
+  .edge.dead{stroke:var(--faint);stroke-width:1.6;opacity:.55;stroke-dasharray:4 4;}
+  .elabel.dead{fill:var(--faint);}
+  @keyframes flowdash{to{stroke-dashoffset:-12}}
   .elabel{font-family:var(--mono);font-size:10px;font-weight:600;fill:var(--muted);
     paint-order:stroke;stroke:var(--stage);stroke-width:4;stroke-linejoin:round;text-anchor:middle;}
   .elabel.hot{fill:var(--allow);font-size:11px;}
@@ -162,6 +190,9 @@
   .tag.x{color:var(--accent);background:var(--accent-soft);}
   .tag.l7{color:var(--world);background:var(--world-soft);}
   .tag.half{color:var(--deny);background:var(--deny-soft);}
+  .tag.obs{color:var(--allow);background:var(--allow-soft);}
+  .ports.bad{color:var(--deny);background:var(--deny-soft);}
+  .stat.bad b{color:var(--deny);}
   .empty{color:var(--muted);margin-top:14px;}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px;
@@ -170,6 +201,9 @@
   .lk.hot{border-color:var(--allow)}
   .lk.ext{border-color:var(--world)}
   .lk.half{border-color:var(--deny);border-top-style:dashed}
+  .lk.obs{border-color:var(--allow);border-top-style:dashed}
+  .lk.ghost{border-color:var(--muted);border-top-style:dotted}
+  .lk.drop{border-color:var(--deny)}
 
   .pol{appearance:none;background:none;border:none;padding:0;margin:0;cursor:pointer;
     font:inherit;color:var(--faint);text-decoration:underline dotted;text-underline-offset:2px;}
@@ -189,7 +223,7 @@
 
   footer{margin-top:18px;font-size:.74rem;color:var(--faint);}
   footer a{color:var(--accent)}
-  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
@@ -209,6 +243,7 @@
   </span>
   <datalist id="nodelist"></datalist>
   <button class="btn" id="audit" aria-pressed="false">audit</button>
+  <button class="btn" id="deadbtn" aria-pressed="false" hidden title="show selector references matching no live workload as phantom nodes">unmatched</button>
   <button class="btn" id="reset">reset</button>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
   <span class="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
@@ -227,6 +262,9 @@
       <span><i class="lk hot"></i>hovered pod or rule — bright, with ports</span>
       <span><i class="lk ext"></i>to entity / CIDR / FQDN</span>
       <span><i class="lk half"></i>half-open: one side missing into default-deny</span>
+      <span class="flows-legend" hidden><i class="lk obs"></i>observed traffic (animated)</span>
+      <span class="flows-legend" hidden><i class="lk ghost"></i>observed, undeclared (on select)</span>
+      <span class="flows-legend" hidden><i class="lk drop"></i>dropped in window</span>
     </div>
   </div>
   <aside class="inspector" id="inspector"></aside>
@@ -249,12 +287,18 @@ const DATA = __PORTOLAN_DATA__;
   const SVGNS = "http://www.w3.org/2000/svg";
 
   // ---------- theme ----------
+  // localStorage throws in sandboxed viewers (file://, iframes); the map
+  // must still render there, just without theme persistence.
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v){ try { localStorage.setItem(k, v); } catch { /* no persistence */ } },
+  };
   const root = document.documentElement;
-  const savedTheme = localStorage.getItem("portolan-theme");
+  const savedTheme = store.get("portolan-theme");
   root.dataset.theme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   $("#theme").addEventListener("click", () => {
     root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
-    localStorage.setItem("portolan-theme", root.dataset.theme);
+    store.set("portolan-theme", root.dataset.theme);
   });
 
   // ---------- indexes ----------
@@ -262,10 +306,12 @@ const DATA = __PORTOLAN_DATA__;
   const wlById = new Map();
   DATA.namespaces.forEach(n => n.workloads.forEach(w => wlById.set(w.id, w)));
   const extById = new Map(DATA.externals.map(e => [e.id, e]));
-  // Mirrors Go's nodeNS: externals (whose IDs may contain "/", e.g. CIDRs)
-  // are never namespaces.
+  // Mirrors Go's nodeNS: externals and phantoms (whose IDs may contain "/",
+  // e.g. CIDRs or selector labels) are never namespaces.
   const nodeNS = id =>
-    /^(entity|cidr|fqdn):/.test(id) ? null : (id.includes("/") ? id.split("/")[0] : null);
+    /^(entity|cidr|fqdn|dead):/.test(id) ? null : (id.includes("/") ? id.split("/")[0] : null);
+  const phById = new Map((DATA.phantoms || []).map(p => [p.id, p]));
+  let showDead = false;
 
   const edgesByNode = new Map();
   const edgeByKey = new Map();
@@ -276,6 +322,39 @@ const DATA = __PORTOLAN_DATA__;
       edgesByNode.get(id).push(e);
     });
   });
+
+  // ---------- flow overlay indexes ----------
+  // FLOWS is observation, not policy: what the datapath did in the capture
+  // window, at the same node granularity as the declared edges.
+  const FLOWS = DATA.flows && DATA.flows.status === "ok" ? DATA.flows : null;
+  const obsByKey = new Map();      // "s|d" -> observed edge (forwarded)
+  const ghostsByNode = new Map();  // node -> observed-but-undeclared edges
+  const dropsByNode = new Map();   // node -> drops
+  const dropPairs = new Map();     // "s|d" -> drops
+  if (FLOWS) {
+    (FLOWS.observed || []).forEach(o => {
+      obsByKey.set(o.s + "|" + o.d, o);
+      if (!o.dec) [o.s, o.d].forEach(id => {
+        if (!ghostsByNode.has(id)) ghostsByNode.set(id, []);
+        ghostsByNode.get(id).push(o);
+      });
+    });
+    (FLOWS.drops || []).forEach(d => {
+      const k = d.s + "|" + d.d;
+      if (!dropPairs.has(k)) dropPairs.set(k, []);
+      dropPairs.get(k).push(d);
+      [d.s, d.d].forEach(id => {
+        if (!dropsByNode.has(id)) dropsByNode.set(id, []);
+        dropsByNode.get(id).push(d);
+      });
+    });
+    document.querySelectorAll(".flows-legend").forEach(el => el.hidden = false);
+  }
+  const obsFor = (s, d) => obsByKey.get(s + "|" + d);
+  const fmtDur = ms => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s >= 60 ? Math.floor(s / 60) + "m" + (s % 60 ? s % 60 + "s" : "") : s + "s";
+  };
 
   // Half-open: sender declared egress (a real per-peer rule, not a broad
   // allowance), but the default-deny receiving side never declared ingress —
@@ -293,7 +372,14 @@ const DATA = __PORTOLAN_DATA__;
   DATA.namespaces.forEach(n => { if (n.policyCount > 0 || n.workloads.length > 0 && activeNS.has(n.name)) activeNS.add(n.name); });
 
   // ---------- header ----------
-  $("#meta").textContent = (DATA.cluster ? DATA.cluster + " · " : "") + DATA.takenAt;
+  let metaText = (DATA.cluster ? DATA.cluster + " · " : "") + DATA.takenAt;
+  if (FLOWS) {
+    // Coverage honesty: Hubble's ring buffer may hold far less than the
+    // requested window — say how much of it traffic was actually seen over.
+    const held = FLOWS.oldestFlow ? fmtDur(new Date(FLOWS.to) - new Date(FLOWS.oldestFlow)) : null;
+    metaText += " · flows " + FLOWS.window + (held ? " (buffer held " + held + ")" : "");
+  }
+  $("#meta").textContent = metaText;
   $("#tool").textContent = DATA.tool;
   const half = DATA.edges.filter(halfOpen).length;
   const statDefs = [
@@ -302,20 +388,41 @@ const DATA = __PORTOLAN_DATA__;
     [DATA.stats.policies, "policies"],
     [DATA.stats.edges, "allow edges"],
     [DATA.stats.crossEdges, "cross-namespace"],
-    [half, "half-open"],
   ];
-  $("#stats").innerHTML = statDefs.map(([v,l]) => `<div class="stat"><b>${v}</b>${l}</div>`).join("");
+  if (FLOWS) statDefs.push([FLOWS.observed.length, "observed edges"]);
+  // Finding chips sit apart at the far right: they are filters, not
+  // inventory — click → the map contracts to those edges (with each
+  // involved workload's neighborhood for context) and the audit panel
+  // opens scrolled to the group. Click again to release.
+  // Zero findings → inert chip: nothing to filter to.
+  statDefs.push([half, "half-open", "push", half ? "aud-half" : ""]);
+  if (FLOWS) statDefs.push([FLOWS.drops.length, "observed drops",
+    FLOWS.drops.length ? "bad" : "", FLOWS.drops.length ? "aud-drops" : ""]);
+  $("#stats").innerHTML = statDefs.map(([v,l,cls,goto]) =>
+    `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`).join("");
+  $("#stats").addEventListener("click", e => {
+    const s = e.target.closest(".stat[data-goto]");
+    if (!s) return;
+    const kind = s.dataset.goto === "aud-half" ? "half" : "drops";
+    if (findingFilter === kind) {
+      findingFilter = null;
+      auditMode = false; $("#audit").setAttribute("aria-pressed", "false");
+      inspectHome(); redraw();
+      return;
+    }
+    findingFilter = kind; pinned = hovered = focusNS = queryPair = null;
+    auditMode = true; $("#audit").setAttribute("aria-pressed", "true");
+    renderAudit(); redraw();
+    document.getElementById(s.dataset.goto)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  if (DATA.flows && DATA.flows.status !== "ok") {
+    DATA.warnings = (DATA.warnings || []).concat(
+      ["flow capture failed (" + DATA.flows.reason + ") — map shows declared policy only"]);
+  }
   if (DATA.warnings && DATA.warnings.length) {
     const w = $("#warnbar");
     w.hidden = false;
-    w.innerHTML = "<b>Not rendered:</b> " + DATA.warnings.map(esc).join(" · ") +
-      ((DATA.deadRefs || []).length
-        ? ' <button class="btn warn-btn" id="warn-audit">show in audit</button>' : "");
-    const wa = $("#warn-audit");
-    if (wa) wa.addEventListener("click", () => {
-      if (!auditMode) $("#audit").click();
-      insp.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    w.innerHTML = "<b>Not rendered:</b> " + DATA.warnings.map(esc).join(" · ");
   }
 
   function esc(s){ const d=document.createElement("i"); d.textContent=s; return d.innerHTML; }
@@ -353,6 +460,25 @@ const DATA = __PORTOLAN_DATA__;
     b.className = "ext"; b.dataset.id = x.id; b.dataset.kind = x.kind;
     b.textContent = (x.kind === "entity" ? "⬡ " : x.kind === "fqdn" ? "＠" : "▧ ") + x.name;
     rail.appendChild(b);
+  });
+  // Phantom chips: unmatched selectors docked in their namespace card (or
+  // on the rail when the scope isn't a single namespace). Hidden until the
+  // unmatched-refs toggle turns them on.
+  (DATA.phantoms || []).forEach(p => {
+    const card = p.namespace && grid.querySelector(`.ns[data-ns="${CSS.escape(p.namespace)}"]`);
+    if (card) {
+      const c = document.createElement("button");
+      c.className = "chip dead"; c.dataset.id = p.id;
+      c.title = p.policies.join("\n");
+      c.innerHTML = `<span class="nm">${esc(p.label)}</span><span class="kd">unmatched</span>`;
+      card.querySelector(".chips").appendChild(c);
+    } else {
+      const b = document.createElement("button");
+      b.className = "ext dead"; b.dataset.id = p.id;
+      b.title = p.policies.join("\n");
+      b.textContent = "⌀ " + (p.namespace ? p.namespace + ": " : "") + p.label;
+      rail.appendChild(b);
+    }
   });
 
   // ---------- geometry ----------
@@ -408,24 +534,39 @@ const DATA = __PORTOLAN_DATA__;
 
   // ---------- view state ----------
   let pinned = null, hovered = null, focusNS = null, query = "", queryPair = null,
-      auditMode = false, hoverEdgeKey = null;
+      auditMode = false, hoverEdgeKey = null, findingFilter = null; // null | "half" | "drops"
+
+  // findingEdges: the edge set behind a finding chip — the map filters to
+  // exactly these when the chip is active.
+  function findingEdges(kind){
+    return kind === "half" ? DATA.edges.filter(halfOpen) : (FLOWS ? FLOWS.drops : []);
+  }
 
   // overlayEdge: hovering an inspector rule row lights up exactly that
   // line on the map — hot, with ports — on top of whatever state is drawn.
+  // Rows for ghosts and drops (which have no declared edge) light up in
+  // their own styles.
   function overlayEdge(){
     if (!hoverEdgeKey) return;
+    const [s, d] = hoverEdgeKey.split("|");
     const e = edgeByKey.get(hoverEdgeKey);
-    if (!e) return;
-    const es = elFor(e.s), ed = elFor(e.d);
+    const es = elFor(s), ed = elFor(d);
     if (!es || !ed) return;
-    [e.s, e.d].forEach(id => {
+    [s, d].forEach(id => {
       const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
                 rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
       if (c) c.classList.add("adj");
     });
-    drawPath(anchor(es), anchor(ed),
-      "edge hot" + (halfOpen(e) ? " half" : "") + (nodeNS(e.d) ? "" : " ext"),
-      e.ports.slice(0,2).join(","));
+    if (e) {
+      const o = obsFor(e.s, e.d);
+      drawPath(anchor(es), anchor(ed),
+        "edge hot" + (halfOpen(e) ? " half" : "") + (nodeNS(e.d) ? "" : " ext") + (o ? " obs" : ""),
+        e.ports.slice(0,2).join(",") + (o ? " ×" + o.n : ""));
+      return;
+    }
+    const dl = dropPairs.get(hoverEdgeKey), o = obsByKey.get(hoverEdgeKey);
+    if (dl) drawPath(anchor(es), anchor(ed), "edge drop", "✕ " + (dl[0].port || dl[0].reason));
+    else if (o) drawPath(anchor(es), anchor(ed), "edge ghost", o.ports.slice(0,2).join(",") + " ×" + o.n);
   }
 
   // ---------- audit ----------
@@ -439,9 +580,16 @@ const DATA = __PORTOLAN_DATA__;
         <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(e.s)}" data-qb="${esc(e.d)}">check</button>
         ${esc(e.s)} → ${esc(e.d)}<small>${polLinks(e.policies)}</small></span>
         <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
+    const drops = FLOWS ? FLOWS.drops : [];
+    const dropItem = d => `<div class="rule" data-es="${esc(d.s)}" data-ed="${esc(d.d)}"><span class="peer">
+        <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(d.s)}" data-qb="${esc(d.d)}">check</button>
+        ${esc(d.s)} → ${esc(d.d)}<small>${esc(d.reason || "dropped")} ×${d.n}${d.last ? " · last " + esc(d.last.slice(11,19)) : ""}</small></span>
+        <span class="ports bad">${esc(d.port || "—")}</span></div>`;
     insp.innerHTML = `<p class="insp-kicker">audit</p>
-      <p class="insp-title">declared-topology findings</p>
-      <div class="rgroup"><h4>half-open passages (${halves.length})</h4>
+      <p class="insp-title">findings</p>
+      ${FLOWS ? `<div class="rgroup"><h4 id="aud-drops">✕ drops observed in window (${drops.length})</h4>
+        ${drops.map(dropItem).join("") || '<p class="empty">none — no traffic denied in the capture window</p>'}</div>` : ""}
+      <div class="rgroup"><h4 id="aud-half">half-open passages (${halves.length})</h4>
         ${halves.map(item).join("") || '<p class="empty">none</p>'}</div>
       <div class="rgroup"><h4>namespaces without default-deny (${noDeny.length})</h4>
         ${noDeny.length ? `<div class="ctx"><ul>${noDeny.map(n=>`<li>${esc(n)}</li>`).join("")}</ul></div>` : '<p class="empty">none — full coverage</p>'}</div>
@@ -449,7 +597,8 @@ const DATA = __PORTOLAN_DATA__;
         ${world.length ? `<div class="ctx"><ul>${world.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : '<p class="empty">none</p>'}</div>
       <div class="rgroup"><h4>selector refs matching nothing (${dead.length})</h4>
         <div class="ctx">May be intentional — completed jobs, scaled-down nodes, or future
-        pods; anything unexplained is a dead rule.
+        pods; anything unexplained is a dead rule. Toggle <b>unmatched</b> in the
+        toolbar to see these as phantom nodes on the map.
         <ul class="scrolllist">${dead.map(r=>`<li>${esc(r)}</li>`).join("") || "<li>none</li>"}</ul></div></div>`;
   }
 
@@ -478,10 +627,19 @@ const DATA = __PORTOLAN_DATA__;
   function passageCard(a, b){
     const e = findEdge(a, b);
     const rev = findEdge(b, a);
+    const o = obsFor(a, b);
+    const dl = dropPairs.get(a + "|" + b);
+    // Observation verdicts outrank topology inference: real traffic (or a
+    // real denial) inside the window is evidence, not reasoning.
+    const obsLine = !FLOWS ? "" :
+      dl ? `<div class="verdict bad" style="margin-top:6px">✕ ${dl.reduce((n,d)=>n+d.n,0)} drop(s) OBSERVED in window — ${esc(dl[0].reason || "denied")}</div>` :
+      o ? `<div class="verdict ok" style="margin-top:6px">⇢ traffic observed: ×${o.n} in window ${o.ports.length ? "on " + o.ports.map(esc).join(" ") : ""}</div>` :
+      `<div class="ctx">no traffic observed on this passage in the capture window</div>`;
     let body = `<p class="insp-kicker">passage check</p>
       <p class="insp-title">${esc(a)} → ${esc(b)}</p>`;
     if (e && halfOpen(e)) {
-      body += `<div class="verdict bad">HALF-OPEN — dropped at the receiver</div>
+      body += `<div class="verdict bad">HALF-OPEN — dropped at the receiver${dl ? " (CONFIRMED by observed drops)" : ""}</div>
+        ${obsLine}
         <div class="ctx">Egress is ${esc(sideDesc(true, e.beg))} by:
         <ul>${e.policies.map(p => `<li><button class="pol" data-pol="${esc(p)}">${esc(p)}</button></li>`).join("")}</ul>
         …but <b>${esc(nodeNS(b) || b)}</b> is default-deny and no ingress rule accepts this
@@ -489,6 +647,7 @@ const DATA = __PORTOLAN_DATA__;
         classic one-sided CNP bug).</div>`;
     } else if (e) {
       body += `<div class="verdict ok">PASSAGE DECLARED · ${e.ports.map(esc).join(" ")}</div>
+        ${obsLine}
         <div class="ctx">
           egress side: <b>${esc(sideDesc(e.eg, e.beg))}</b><br>
           ingress side: <b>${esc(sideDesc(e.in, e.bin))}</b>
@@ -500,7 +659,10 @@ const DATA = __PORTOLAN_DATA__;
       const inn = (edgesByNode.get(b) || []).filter(x => x.d === b);
       const broadOut = out.some(x => x.beg || ["entity:cluster","entity:all"].includes(x.d));
       body += `<div class="verdict none">NO DECLARED PASSAGE</div>
+        ${obsLine}
         <div class="ctx">
+        ${o ? `<b>Yet traffic flows</b> — it rides a broad allowance or an unpolicied
+          namespace, not a per-pair rule. Tightening either side would cut it.<br>` : ""}
         ${rev ? `Note: the <b>reverse</b> passage ${esc(b)} → ${esc(a)} exists.<br>` : ""}
         ${broadOut ? `<b>${esc(a)}</b> holds a broad egress allowance, so if this fails
           in practice the gap is likely on the receiving side.<br>` : ""}
@@ -520,11 +682,15 @@ const DATA = __PORTOLAN_DATA__;
       if (c) c.classList.add("sel");
     });
     const e = findEdge(a, b);
-    if (e) {
-      const ea = elFor(a), eb = elFor(b);
-      if (ea && eb) drawPath(anchor(ea), anchor(eb),
-        "edge mid" + (halfOpen(e) ? " half" : ""), "");
+    const ea = elFor(a), eb = elFor(b);
+    if (e && ea && eb) drawPath(anchor(ea), anchor(eb),
+      "edge mid" + (halfOpen(e) ? " half" : "") + (obsFor(a, b) ? " obs" : ""), "");
+    if (!e && ea && eb && obsFor(a, b)) {
+      const o = obsFor(a, b);
+      drawPath(anchor(ea), anchor(eb), "edge ghost", o.ports.slice(0,2).join(",") + " ×" + o.n);
     }
+    const dl = dropPairs.get(a + "|" + b);
+    if (dl && ea && eb) drawPath(anchor(ea), anchor(eb), "edge drop", "✕ " + (dl[0].port || dl[0].reason));
     grid.querySelectorAll(".ns").forEach(card => {
       if (card.querySelector(".chip.sel")) card.classList.add("has-active");
     });
@@ -538,12 +704,15 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // neighborhoodNS: the namespaces a node's edges touch (plus its own).
+  // Phantoms have no id-derived namespace but may be docked in one.
+  const homeNS = id => nodeNS(id) || phById.get(id)?.namespace || null;
   function neighborhoodNS(id){
     const set = new Set();
-    const own = nodeNS(id);
+    const own = homeNS(id);
     if (own) set.add(own);
     (edgesByNode.get(id) || []).forEach(e => {
-      [nodeNS(e.s), nodeNS(e.d)].forEach(n => { if (n) set.add(n); });
+      if (e.dead && !showDead) return;
+      [homeNS(e.s), homeNS(e.d)].forEach(n => { if (n) set.add(n); });
     });
     return set;
   }
@@ -562,6 +731,20 @@ const DATA = __PORTOLAN_DATA__;
         neighborhoodNS(w.id).forEach(n => contract.add(n));
       });
     }
+    else if (findingFilter) {
+      // Contract to the involved workloads' full neighborhoods — the
+      // finding plus everything those workloads connect to.
+      contract = new Set();
+      findingEdges(findingFilter).forEach(e => {
+        [e.s, e.d].forEach(id => {
+          const ns = homeNS(id);
+          if (!ns) return;
+          contract.add(ns);
+          neighborhoodNS(id).forEach(n => contract.add(n));
+        });
+      });
+      if (contract.size === 0) contract = null; // empty finding set: don't blank the grid
+    }
     grid.querySelectorAll(".ns").forEach(card => {
       const name = card.dataset.ns;
       const vis = visibleNS(name) && (!contract || contract.has(name));
@@ -577,7 +760,9 @@ const DATA = __PORTOLAN_DATA__;
       <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
 
     const active = hovered || pinned;
-    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair));
+    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter));
+    document.querySelectorAll(".stat[data-goto]").forEach(s =>
+      s.classList.toggle("on", findingFilter === (s.dataset.goto === "aud-half" ? "half" : "drops")));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
@@ -589,8 +774,59 @@ const DATA = __PORTOLAN_DATA__;
     else if (queryPair) drawPair(queryPair);
     else if (pinned) drawNode(pinned, false);
     else if (focusNS) drawFocus(focusNS);
+    else if (findingFilter) drawFinding(findingFilter);
     else drawOverview();
     overlayEdge();
+  }
+
+  // drawFinding: the map reduced to one finding class — every half-open
+  // passage, or every observed drop. Each involved workload gets its full
+  // declared neighborhood drawn calm (as if it were pinned) so the finding
+  // sits in context, then the finding edges go on top, bright and labeled.
+  function drawFinding(kind){
+    const edges = findingEdges(kind);
+    const involved = new Set();
+    edges.forEach(e => [e.s, e.d].forEach(id => { if (nodeNS(id)) involved.add(id); }));
+
+    const seen = new Set();
+    involved.forEach(id => {
+      const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`);
+      if (c) c.classList.add("sel");
+      (edgesByNode.get(id) || []).forEach(e => {
+        if (e.dead && !showDead) return;
+        const key = e.s + "|" + e.d;
+        if (seen.has(key)) return; seen.add(key);
+        const es = elFor(e.s), ed = elFor(e.d);
+        if (!es || !ed) return;
+        [e.s, e.d].forEach(nid => {
+          if (involved.has(nid)) return;
+          const cc = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
+                     rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
+          if (cc) cc.classList.add("adj");
+        });
+        const other = e.s === id ? e.d : e.s;
+        drawPath(anchor(es), anchor(ed), e.dead ? "edge mid dead" :
+          "edge mid" + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext") + (obsFor(e.s, e.d) ? " obs" : ""), "");
+      });
+    });
+
+    edges.forEach(e => {
+      const es = elFor(e.s), ed = elFor(e.d);
+      if (!es || !ed) return;
+      [e.s, e.d].forEach(id => {
+        const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
+                  rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+        if (c && !involved.has(id)) c.classList.add("adj");
+      });
+      if (kind === "half") {
+        drawPath(anchor(es), anchor(ed), "edge hot half", e.ports.slice(0,2).join(","));
+      } else {
+        drawPath(anchor(es), anchor(ed), "edge drop", "✕ " + (e.port || e.reason));
+      }
+    });
+    grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+    });
   }
 
   // DNS plumbing: edges into cluster DNS, or whose only ports are 53.
@@ -611,8 +847,9 @@ const DATA = __PORTOLAN_DATA__;
       const a = nodeNS(e.s), b = nodeNS(e.d);
       if (!visibleNS(a) || !visibleNS(b)) return;
       const key = a+"|"+b;
-      const cur = agg.get(key) || { n:0, half:false };
+      const cur = agg.get(key) || { n:0, half:false, obs:false };
       cur.n++; cur.half = cur.half || halfOpen(e);
+      cur.obs = cur.obs || !!obsFor(e.s, e.d);
       agg.set(key, cur);
     });
     agg.forEach((v, key) => {
@@ -621,7 +858,31 @@ const DATA = __PORTOLAN_DATA__;
       const eb = grid.querySelector(`.ns[data-ns="${CSS.escape(b)}"]`);
       if (!ea || !eb) return;
       // No labels in the overview — it's a shape to scan, not a table.
-      drawPath(anchor(ea), anchor(eb), "edge agg" + (v.half ? " half" : ""), "");
+      // Pairs carrying observed traffic breathe; the rest stay still.
+      drawPath(anchor(ea), anchor(eb),
+        "edge agg" + (v.half ? " half" : "") + (v.obs ? " obs" : ""), "");
+    });
+    // With the toggle on, dormant rules are part of the overview too.
+    if (showDead) DATA.edges.filter(e => e.dead).forEach(e => {
+      const es = elFor(e.s), ed = elFor(e.d);
+      if (es && ed) drawPath(anchor(es), anchor(ed), "edge dead", "");
+    });
+    drawDrops(null);
+  }
+
+  // drawDrops: observed denials are alert-grade — always on the map, red,
+  // labeled with the port. Scoped to one node when id is given.
+  function drawDrops(id){
+    const seen = new Set();
+    const list = id ? (dropsByNode.get(id) || []) : [...dropPairs.values()].flat();
+    list.forEach(d => {
+      const key = d.s + "|" + d.d;
+      if (seen.has(key)) return; seen.add(key);
+      const a = nodeNS(d.s), b = nodeNS(d.d);
+      if ((a && !visibleNS(a)) || (b && !visibleNS(b))) return;
+      const es = elFor(d.s), ed = elFor(d.d);
+      if (!es || !ed) return;
+      drawPath(anchor(es), anchor(ed), "edge drop", "✕ " + (d.port || d.reason));
     });
   }
 
@@ -631,17 +892,38 @@ const DATA = __PORTOLAN_DATA__;
     if (el && el.classList.contains("ext")) el.classList.add("sel");
     const tone = hot ? "edge hot" : "edge mid";
     (edgesByNode.get(id) || []).forEach(e => {
+      if (e.dead && !showDead) return;
       const other = e.s === id ? e.d : e.s;
       const eo = elFor(other), es = elFor(id);
       if (!eo || !es) return;
       const oChip = grid.querySelector(`.chip[data-id="${CSS.escape(other)}"]`) ||
                     rail.querySelector(`.ext[data-id="${CSS.escape(other)}"]`);
       if (oChip) oChip.classList.add("adj");
-      const cls = tone + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext");
+      const o = obsFor(e.s, e.d);
+      const cls = e.dead ? tone + " dead" :
+        tone + (halfOpen(e) ? " half" : "") + (nodeNS(other) ? "" : " ext") + (o ? " obs" : "");
       const a = e.s === id ? anchor(es) : anchor(eo);
       const b = e.s === id ? anchor(eo) : anchor(es);
-      drawPath(a, b, cls, hot ? e.ports.slice(0,2).join(",") : "");
+      let label = hot ? e.ports.slice(0,2).join(",") : "";
+      if (hot && o) label += " ×" + o.n;
+      drawPath(a, b, cls, label);
     });
+    // Ghosts: traffic seen touching this node with no declared per-pair edge.
+    const gseen = new Set();
+    (ghostsByNode.get(id) || []).forEach(o => {
+      const key = o.s + "|" + o.d;
+      if (gseen.has(key)) return; gseen.add(key);
+      const es = elFor(o.s), ed = elFor(o.d);
+      if (!es || !ed) return;
+      [o.s, o.d].forEach(nid => {
+        const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
+                  rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
+        if (c && nid !== id) c.classList.add("adj");
+      });
+      drawPath(anchor(es), anchor(ed), "edge ghost",
+        hot ? o.ports.slice(0,2).join(",") + " ×" + o.n : "");
+    });
+    drawDrops(id);
     grid.querySelectorAll(".ns").forEach(card => {
       if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
     });
@@ -654,6 +936,7 @@ const DATA = __PORTOLAN_DATA__;
     const seen = new Set();
     (nsByName.get(ns)?.workloads || []).forEach(w => {
       (edgesByNode.get(w.id) || []).forEach(e => {
+        if (e.dead && !showDead) return;
         const key = e.s+"|"+e.d;
         if (seen.has(key)) return; seen.add(key);
         const es = elFor(e.s), ed = elFor(e.d);
@@ -665,9 +948,11 @@ const DATA = __PORTOLAN_DATA__;
         });
         // Namespace scope is committed but unspecific: calm lines, no port
         // labels. Hover or pin a pod for full brightness and ports.
-        drawPath(anchor(es), anchor(ed), "edge mid" + (halfOpen(e) ? " half" : ""), "");
+        drawPath(anchor(es), anchor(ed), e.dead ? "edge mid dead" :
+          "edge mid" + (halfOpen(e) ? " half" : "") + (obsFor(e.s, e.d) ? " obs" : ""), "");
       });
     });
+    (nsByName.get(ns)?.workloads || []).forEach(w => drawDrops(w.id));
     grid.querySelectorAll(".ns").forEach(c => {
       if (c.querySelector(".chip.adj")) c.classList.add("has-active");
     });
@@ -681,7 +966,9 @@ const DATA = __PORTOLAN_DATA__;
       <p class="insp-title">Select a workload</p>
       <p class="insp-sub">hover · click to pin · click a namespace header to focus it</p>
       <p class="empty">The overview shows cross-namespace allows aggregated per namespace pair.
-      Dashed red = half-open: one side declared, the other missing where default-deny would drop it.</p>`;
+      Dashed red = half-open: one side declared, the other missing where default-deny would drop it.
+      ${FLOWS ? "Animated lines carried real traffic in the last " + esc(FLOWS.window) +
+        "; solid red lines are observed drops." : ""}</p>`;
   }
   // Policy provenance renders as clickable names — the escape hatch from
   // resolved effects to the raw rule payloads (shown in a dismissible
@@ -692,27 +979,63 @@ const DATA = __PORTOLAN_DATA__;
   function ruleRow(peerId, e, dir){
     const ext = !nodeNS(peerId);
     const peer = ext ? (extById.get(peerId)?.name || peerId) : peerId;
+    const o = obsFor(e.s, e.d);
     const tags =
       (e.cross ? '<span class="tag x">x-ns</span>' : "") +
       (e.l7 ? '<span class="tag l7">L7</span>' : "") +
-      (halfOpen(e) ? '<span class="tag half">half</span>' : "");
+      (halfOpen(e) ? '<span class="tag half">half</span>' : "") +
+      (e.dead ? '<span class="tag">dormant</span>' : "") +
+      (o ? `<span class="tag obs">seen ×${o.n}</span>` : "");
     return `<div class="rule" data-es="${esc(e.s)}" data-ed="${esc(e.d)}"><span class="peer">${esc(peer)}${tags}
       <small>${polLinks(e.policies)}</small></span>
       <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
   }
+  function ghostRow(id, o){
+    const peerId = o.s === id ? o.d : o.s;
+    const dir = o.s === id ? "→" : "←";
+    const peer = nodeNS(peerId) ? peerId : (extById.get(peerId)?.name || peerId);
+    return `<div class="rule" data-es="${esc(o.s)}" data-ed="${esc(o.d)}"><span class="peer">${esc(dir)} ${esc(peer)}
+      <small>×${o.n} in window — no per-pair declared edge (broad allowance or unpolicied namespace)</small></span>
+      <span class="ports">${o.ports.map(esc).join(" ")}</span></div>`;
+  }
+  function dropRow(id, d){
+    const peerId = d.s === id ? d.d : d.s;
+    const dir = d.s === id ? "→" : "←";
+    const peer = nodeNS(peerId) ? peerId : (extById.get(peerId)?.name || peerId);
+    return `<div class="rule" data-es="${esc(d.s)}" data-ed="${esc(d.d)}"><span class="peer">${esc(dir)} ${esc(peer)}
+      <small>${esc(d.reason || "dropped")} ×${d.n}${d.last ? " · last " + esc(d.last.slice(11,19)) : ""}</small></span>
+      <span class="ports bad">${esc(d.port || "—")}</span></div>`;
+  }
   function inspect(id){
-    const wl = wlById.get(id), ext = extById.get(id);
-    const es = edgesByNode.get(id) || [];
+    const wl = wlById.get(id), ext = extById.get(id), ph = phById.get(id);
+    const es = (edgesByNode.get(id) || []).filter(e => !e.dead || showDead || ph);
     const out = es.filter(e => e.s === id), inn = es.filter(e => e.d === id);
+    if (ph) {
+      insp.innerHTML = `<p class="insp-kicker">unmatched selector</p>
+        <p class="insp-title">${esc(ph.label)}</p>
+        <p class="insp-sub">${ph.namespace ? esc(ph.namespace) + " · " : ""}matches no live workload</p>
+        <div class="ctx">Declared by:<ul>${ph.policies.map(p => `<li><button class="pol" data-pol="${esc(p)}">${esc(p)}</button></li>`).join("")}</ul>
+        May be intentional (scaled-down node, Job pods between runs, future
+        deploy) — or a dead rule to remove.</div>
+        ${out.length ? `<div class="rgroup"><h4>→ rule would allow reaching</h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
+        ${inn.length ? `<div class="rgroup"><h4>← rule would accept from</h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}`;
+      return;
+    }
     const halves = es.filter(halfOpen);
+    const ghosts = ghostsByNode.get(id) || [];
+    const drops = dropsByNode.get(id) || [];
     insp.innerHTML = `<p class="insp-kicker">${wl ? "workload" : "external"}</p>
       <p class="insp-title">${esc(wl ? wl.name : (ext?.name || id))}</p>
       <p class="insp-sub">${wl ? esc(nodeNS(id)) + " · " + esc(wl.kind) : esc(ext?.kind || "")}</p>
       ${halves.length ? `<div class="half-warn"><b>${halves.length} half-open edge(s)</b> —
         allowed on one side only; the default-deny far side will drop this traffic.</div>` : ""}
+      ${drops.length ? `<div class="half-warn"><b>${drops.length} drop(s) observed</b> —
+        the datapath denied traffic touching this node inside the capture window.</div>` : ""}
       ${out.length ? `<div class="rgroup"><h4>→ may reach</h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
       ${inn.length ? `<div class="rgroup"><h4>← reachable from</h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}
-      ${!out.length && !inn.length ? '<p class="empty">No edges — nothing declared for this node.</p>' : ""}`;
+      ${ghosts.length ? `<div class="rgroup"><h4>⋯ observed, undeclared</h4>${ghosts.map(o => ghostRow(id, o)).join("")}</div>` : ""}
+      ${drops.length ? `<div class="rgroup"><h4>✕ observed drops</h4>${drops.map(d => dropRow(id, d)).join("")}</div>` : ""}
+      ${!out.length && !inn.length && !ghosts.length && !drops.length ? '<p class="empty">No edges — nothing declared for this node.</p>' : ""}`;
   }
   function inspectNS(name){
     const ns = nsByName.get(name);
@@ -724,6 +1047,13 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // ---------- interactions ----------
+  // Committing a selection clears the search: the filter's job (finding the
+  // node) is done, and keeping it active would hide parts of the selection's
+  // neighborhood that don't match the leftover text.
+  function clearSearch(){
+    if (!query) return;
+    query = ""; $("#search").value = "";
+  }
   grid.addEventListener("mouseover", e => {
     const chip = e.target.closest(".chip");
     if (chip) { hovered = chip.dataset.id; redraw(); }
@@ -733,11 +1063,11 @@ const DATA = __PORTOLAN_DATA__;
   });
   grid.addEventListener("click", e => {
     const chip = e.target.closest(".chip");
-    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; redraw(); return; }
+    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; findingFilter = null; clearSearch(); redraw(); return; }
     const head = e.target.closest(".ns-head");
     if (head) {
       const ns = head.parentElement.dataset.ns;
-      focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; redraw();
+      focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; findingFilter = null; clearSearch(); redraw();
     }
   });
   function runQuery(){
@@ -749,7 +1079,7 @@ const DATA = __PORTOLAN_DATA__;
         unique short name. ${!a ? "Source" : "Destination"} didn't resolve.</p>`;
       return;
     }
-    queryPair = [a, b]; pinned = null; hovered = null; focusNS = null; redraw();
+    queryPair = [a, b]; pinned = null; hovered = null; focusNS = null; findingFilter = null; clearSearch(); redraw();
   }
   $("#qgo").addEventListener("click", runQuery);
   [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
@@ -757,9 +1087,24 @@ const DATA = __PORTOLAN_DATA__;
   }));
   $("#audit").addEventListener("click", function(){
     auditMode = !auditMode; this.setAttribute("aria-pressed", String(auditMode));
+    findingFilter = null;
     if (auditMode) { pinned = hovered = focusNS = queryPair = null; renderAudit(); redraw(); }
     else { inspectHome(); redraw(); }
   });
+  // Unmatched-refs toggle: dormant rules become phantom chips + dashed
+  // edges, drawn where the missing workload would sit.
+  if (phById.size) {
+    const db = $("#deadbtn");
+    db.hidden = false;
+    db.textContent = `unmatched (${phById.size})`;
+    db.addEventListener("click", function(){
+      showDead = !showDead;
+      this.setAttribute("aria-pressed", String(showDead));
+      document.body.classList.toggle("show-dead", showDead);
+      if (pinned && phById.has(pinned) && !showDead) pinned = null;
+      redraw();
+    });
+  }
   // audit rows carry a "check" button that runs the passage query
   insp.addEventListener("click", e => {
     const b = e.target.closest("[data-qa]");
@@ -803,10 +1148,10 @@ const DATA = __PORTOLAN_DATA__;
   });
   rail.addEventListener("click", e => {
     const x = e.target.closest(".ext");
-    if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; redraw(); }
+    if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; findingFilter = null; clearSearch(); redraw(); }
   });
   $("#reset").addEventListener("click", () => {
-    pinned = hovered = focusNS = queryPair = null;
+    pinned = hovered = focusNS = queryPair = findingFilter = null;
     $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
     inspectHome(); redraw();
   });
@@ -816,17 +1161,17 @@ const DATA = __PORTOLAN_DATA__;
 
   // Click anywhere outside the interactive surfaces → back to the main view.
   document.addEventListener("click", e => {
-    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar")) return;
-    if (pinned || focusNS || queryPair || auditMode) {
-      pinned = focusNS = queryPair = null;
+    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .stat[data-goto]")) return;
+    if (pinned || focusNS || queryPair || auditMode || findingFilter) {
+      pinned = focusNS = queryPair = findingFilter = null;
       if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
       inspectHome(); redraw();
     }
   });
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !polmodal.hidden) { polmodal.hidden = true; return; }
-    if (e.key === "Escape" && (pinned || focusNS || queryPair || auditMode)) {
-      pinned = focusNS = queryPair = null;
+    if (e.key === "Escape" && (pinned || focusNS || queryPair || auditMode || findingFilter)) {
+      pinned = focusNS = queryPair = findingFilter = null;
       if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
       inspectHome(); redraw();
     }

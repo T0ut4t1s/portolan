@@ -22,6 +22,11 @@ type Audit struct {
 	// DeadRefs are selector references matching no live workload. Possibly
 	// intentional (scaled-down nodes, future pods), possibly dead rules.
 	DeadRefs []string `json:"deadRefs"`
+	// Drops are traffic denials actually observed in the snapshot's Hubble
+	// window — not derived from topology but included here because a drop
+	// is the strongest possible audit finding: the misconfiguration (or the
+	// attack) already happened. Empty when the snapshot carried no capture.
+	Drops []DropEdge `json:"drops,omitempty"`
 }
 
 // worldLike are sources wide enough that ingress from them means
@@ -61,5 +66,8 @@ func ComputeAudit(g *Graph) *Audit {
 	}
 	slices.Sort(a.WorldReachable)
 	slices.Sort(a.NoDefaultDeny)
+	if g.Flows != nil {
+		a.Drops = g.Flows.Drops
+	}
 	return a
 }

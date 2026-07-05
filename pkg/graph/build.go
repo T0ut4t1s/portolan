@@ -130,9 +130,26 @@ type builder struct {
 	workloads map[string][]snapshot.Workload // namespace -> workloads
 	edges     map[string]*Edge               // "src|dst" -> aggregated edge
 	externals map[string]External
-	dropped   map[string]int // unsupported-construct counters
-	deadRefs  []string       // "policy → selector" refs matching no live workload
+	phantoms  map[string]*Phantom // unmatched selectors as renderable nodes
+	dropped   map[string]int      // unsupported-construct counters
+	deadRefs  []string            // "policy → selector" refs matching no live workload
 }
+
+// phantom records an unmatched selector as a pseudo-node and returns its ID
+// so the caller can still create the (dead-tagged) edges the rule declares.
+// ns is set when the selector's scope resolved to exactly one namespace.
+func (b *builder) phantom(ns, label, prov string) string {
+	id := "dead:" + ns + "|" + label
+	p, ok := b.phantoms[id]
+	if !ok {
+		p = &Phantom{ID: id, Namespace: ns, Label: label}
+		b.phantoms[id] = p
+	}
+	p.Policies = append(p.Policies, prov)
+	return id
+}
+
+func isDead(id string) bool { return strings.HasPrefix(id, "dead:") }
 
 // Build derives the renderable topology from a snapshot.
 func Build(snap *snapshot.Snapshot) *Graph {
@@ -142,6 +159,7 @@ func Build(snap *snapshot.Snapshot) *Graph {
 		workloads: map[string][]snapshot.Workload{},
 		edges:     map[string]*Edge{},
 		externals: map[string]External{},
+		phantoms:  map[string]*Phantom{},
 		dropped:   map[string]int{},
 	}
 	for _, ns := range snap.Namespaces {
@@ -363,6 +381,11 @@ func (b *builder) netpolPeers(peer netpolPeer, policyNS, prov string) []string {
 	}
 	if out == nil {
 		b.deadRefs = append(b.deadRefs, prov+" → netpol peer "+selSummary(podSel))
+		ns := ""
+		if len(namespaces) == 1 {
+			ns = namespaces[0]
+		}
+		return []string{b.phantom(ns, selSummary(podSel), prov)}
 	}
 	return out
 }
@@ -403,6 +426,11 @@ func (b *builder) match(sel labelSel, defaultNS, prov string) []string {
 	}
 	if out == nil {
 		b.deadRefs = append(b.deadRefs, prov+" → "+selSummary(sel))
+		ns := ""
+		if len(namespaces) == 1 {
+			ns = namespaces[0]
+		}
+		return []string{b.phantom(ns, selSummary(sel), prov)}
 	}
 	return out
 }
@@ -514,7 +542,7 @@ func (b *builder) edge(src, dst string, ports []string, prov string, egress, ing
 	key := src + "|" + dst
 	e, ok := b.edges[key]
 	if !ok {
-		e = &Edge{Src: src, Dst: dst}
+		e = &Edge{Src: src, Dst: dst, Dead: isDead(src) || isDead(dst)}
 		b.edges[key] = e
 	}
 	e.Ports = append(e.Ports, ports...)
@@ -666,24 +694,34 @@ func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]i
 	for construct, n := range b.dropped {
 		g.Warnings = append(g.Warnings, fmt.Sprintf("%d %s not rendered", n, construct))
 	}
-	if len(b.deadRefs) > 0 {
-		g.Warnings = append(g.Warnings, fmt.Sprintf("%d selector reference(s) matched no live workload (see audit)", len(b.deadRefs)))
-	}
 	slices.Sort(g.Warnings)
 	slices.Sort(b.deadRefs)
 	g.DeadRefs = slices.Compact(b.deadRefs)
+
+	// Unmatched selectors surface as phantom nodes behind a map toggle
+	// (not as a warning — they are renderable, not un-renderable).
+	for _, p := range b.phantoms {
+		slices.Sort(p.Policies)
+		p.Policies = slices.Compact(p.Policies)
+		g.Phantoms = append(g.Phantoms, *p)
+	}
+	slices.SortFunc(g.Phantoms, func(a, b Phantom) int { return cmp.Compare(a.ID, b.ID) })
 
 	g.Stats = Stats{
 		Namespaces: len(g.Namespaces),
 		Workloads:  len(b.snap.Workloads),
 		Policies:   len(b.snap.Policies),
-		Edges:      len(g.Edges),
 	}
 	for _, e := range g.Edges {
+		if e.Dead {
+			continue // dormant rules don't count as live topology
+		}
+		g.Stats.Edges++
 		if e.Cross {
 			g.Stats.CrossEdges++
 		}
 	}
+	attachFlows(g, b.snap.Flows)
 	return g
 }
 
@@ -696,7 +734,8 @@ func crossNS(src, dst string) bool {
 }
 
 func nodeNS(id string) (string, bool) {
-	if strings.HasPrefix(id, "entity:") || strings.HasPrefix(id, "cidr:") || strings.HasPrefix(id, "fqdn:") {
+	if strings.HasPrefix(id, "entity:") || strings.HasPrefix(id, "cidr:") ||
+		strings.HasPrefix(id, "fqdn:") || isDead(id) {
 		return "", false
 	}
 	ns, _, ok := strings.Cut(id, "/")

@@ -45,6 +45,23 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 `)
 
 	n := 0
+	if len(a.Drops) > 0 {
+		n++
+		w("## Finding %d — traffic drops observed in the capture window (%d)\n\n", n, len(a.Drops))
+		w("These are not topology inferences: the datapath **actually denied** this traffic "+
+			"during the %s window ending %s. Strongest evidence in this brief.\n\n", g.Flows.Window, g.Flows.To.Format("2006-01-02 15:04 UTC"))
+		for _, d := range a.Drops {
+			w("- `%s → %s` %s — **%s** ×%d, last seen %s\n",
+				d.Src, d.Dst, d.Port, d.Reason, d.Count, d.LastSeen.Format("15:04:05"))
+		}
+		w("\nTriage: `POLICY_DENIED` involving two cluster workloads → almost certainly a missing " +
+			"allow rule (check whether a half-open finding below names the same pair — that pairing is " +
+			"a confirmed misconfiguration). `POLICY_DENIED` from `entity:world` → usually correct " +
+			"enforcement doing its job; verify the exposure is intended to be closed. Other reasons " +
+			"(e.g. `VLAN_FILTERED`, `CT_MAP_INSERTION_FAILED`) are datapath conditions, not policy — " +
+			"investigate separately.\n\n```sh\n# Watch the pair live:\nhubble observe --verdict DROPPED " +
+			"--from-namespace <src-ns> --to-namespace <dst-ns> --since 1h -o compact\n```\n\n")
+	}
 	for _, e := range a.HalfOpen {
 		n++
 		srcNS, _ := nodeNS(e.Src)

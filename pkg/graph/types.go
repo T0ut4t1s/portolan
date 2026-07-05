@@ -33,12 +33,21 @@ type Graph struct {
 	// workload — "policy → selector" — food for the audit view. May be
 	// intentional (scaled-down node, future pods) or a dead rule.
 	DeadRefs []string `json:"deadRefs,omitempty"`
+	// Phantoms are the renderable form of DeadRefs: one pseudo-node per
+	// distinct unmatched selector, docked in its namespace when the scope
+	// resolves to exactly one. Their edges carry Dead=true; the map hides
+	// both behind a toggle so dormant rules can be seen where they would
+	// land instead of read as a count.
+	Phantoms []Phantom `json:"phantoms,omitempty"`
 	// PolicyRules carries each policy's rule payloads verbatim, keyed by
 	// the same provenance strings edges use — the inspector's "show me the
 	// actual policy" escape hatch. Resolved effects stay the primary view;
 	// this is the raw source for the few moments that need it.
 	PolicyRules map[string][]json.RawMessage `json:"policyRules,omitempty"`
-	Stats       Stats                        `json:"stats"`
+	// Flows is the observed-traffic overlay, present when the snapshot
+	// carried a Hubble capture (see FlowOverlay).
+	Flows *FlowOverlay `json:"flows,omitempty"`
+	Stats Stats        `json:"stats"`
 }
 
 // Namespace groups the workload nodes it contains.
@@ -67,6 +76,17 @@ type External struct {
 	Name string `json:"name"`
 }
 
+// Phantom is a pseudo-node for a selector that matched no live workload.
+type Phantom struct {
+	ID string `json:"id"` // "dead:<ns>|<selector summary>"
+	// Namespace is set when the selector's scope resolved to exactly one
+	// namespace; phantoms without one render on the externals rail.
+	Namespace string `json:"namespace,omitempty"`
+	// Label is the selector summary shown on the chip.
+	Label    string   `json:"label"`
+	Policies []string `json:"policies"`
+}
+
 // Edge is one aggregated directional allow: src may reach dst on Ports.
 type Edge struct {
 	Src string `json:"s"`
@@ -88,6 +108,10 @@ type Edge struct {
 	// L7 marks edges whose port rules carry L7 sections (rendered as a
 	// badge; rule bodies are not interpreted).
 	L7 bool `json:"l7,omitempty"`
+	// Dead marks edges with a phantom endpoint — a rule declared against a
+	// selector matching no live workload. Excluded from stats and findings;
+	// rendered only behind the unmatched-refs toggle.
+	Dead bool `json:"dead,omitempty"`
 	// Policies lists "kind/namespace/name" provenance, sorted.
 	Policies []string `json:"policies"`
 }

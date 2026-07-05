@@ -49,6 +49,17 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   controller identities the policy map draws, so observed and declared edges
   join cleanly. Honesty metadata included: if Hubble's ring buffer covered
   less than the requested window, `flows.oldestFlow` says so.
+
+  On the map, observation becomes texture: declared edges that carried real
+  traffic **animate**; traffic with no per-pair declared edge (riding a
+  broad allowance or an unpolicied namespace) draws as a dotted **ghost**;
+  denials draw **red** and always show, with the finding chips in the header
+  acting as filters — click `observed drops` or `half-open` and the map
+  contracts to those findings in the context of everything the involved
+  workloads may reach. An `unmatched` toggle renders selector references
+  matching no live workload as phantom nodes docked where the missing
+  workload would sit — dormant rules you can see, hover, and trace to their
+  declaring policy.
 - **What-if** *(roadmap)* — feed it a draft policy and get the blast radius:
   which flows it newly permits, which observed drops it would fix, what it
   removes. Powered by Cilium's own policy engine, not a reimplementation — so
