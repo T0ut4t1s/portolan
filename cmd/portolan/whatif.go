@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/T0ut4t1s/portolan/pkg/render"
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
 	"github.com/T0ut4t1s/portolan/pkg/whatif"
 )
@@ -26,6 +27,7 @@ func cmdWhatif(args []string) error {
 	fs.Var(&drafts, "f", "draft policy manifest (YAML/JSON, multi-doc; repeatable) — replaces or adds by kind/namespace/name")
 	fs.Var(&deletes, "delete", "policy to remove, as Kind/namespace/name (repeatable)")
 	asJSON := fs.Bool("json", false, "emit the result as JSON")
+	htmlOut := fs.String("o", "", "also write the result as a self-contained HTML delta map (e.g. whatif.html)")
 	failOnBreak := fs.Bool("fail-on-break", false, "exit 1 when the draft would break observed live traffic (CI gate)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,6 +67,16 @@ func cmdWhatif(args []string) error {
 		}
 	} else {
 		printResult(snap, res)
+	}
+	if *htmlOut != "" {
+		html, err := render.WhatifHTML(snap, res)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*htmlOut, html, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "wrote delta map to %s\n", *htmlOut)
 	}
 	if *failOnBreak && len(res.BreaksFlows) > 0 {
 		os.Exit(1)

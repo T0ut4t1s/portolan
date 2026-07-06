@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portolan — what-if delta</title>
+<style>
+  :root{
+    --bg:#e9ebf3; --stage:#f3f4fa; --surface:#ffffff; --surface-2:#f7f8fc;
+    --ink:#191b2b; --ink-2:#3a3d55; --muted:#63678a; --faint:#8a8ea8;
+    --line:#d7dae9; --line-2:#c6cae0;
+    --accent:#5b6cf0; --accent-soft:#e6e9ff;
+    --allow:#0f9c8c; --allow-soft:#d6f2ee;
+    --deny:#d83a40; --deny-soft:#fbe0e1;
+    --world:#a9741f; --world-soft:#f5e9d4;
+    --shadow:0 1px 2px rgba(24,28,60,.06),0 6px 18px rgba(24,28,60,.07);
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --ui:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  [data-theme="dark"]{
+    --bg:#0c0d16; --stage:#111324; --surface:#171a2c; --surface-2:#1c1f33;
+    --ink:#edeefb; --ink-2:#c3c6e2; --muted:#9498bd; --faint:#6b6f92;
+    --line:#262a45; --line-2:#333963;
+    --accent:#8b97ff; --accent-soft:#232848;
+    --allow:#2dd4bf; --allow-soft:#123330;
+    --deny:#ff6b70; --deny-soft:#3a1b1f;
+    --world:#e0b25a; --world-soft:#332a17;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 26px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
+
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-bottom:6px;}
+  header #theme{margin-left:auto;}
+  .titleblock{display:flex;flex-direction:column;gap:3px;}
+  h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;}
+  h1 b{color:var(--accent)}
+  .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
+  .meta b{color:var(--ink-2);font-weight:600;}
+
+  /* The change set: what the draft did to the policy inventory. Never the
+     YAML — just the ledger line per policy. */
+  .changeset{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0;}
+  .change{font-family:var(--mono);font-size:.72rem;border-radius:8px;padding:4px 10px;
+    border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);}
+  .change[data-op="added"]{border-color:var(--allow);background:var(--allow-soft);}
+  .change[data-op="deleted"]{border-color:var(--deny);background:var(--deny-soft);}
+  .change[data-op="replaced"]{border-color:var(--accent);background:var(--accent-soft);}
+  .change i{font-style:normal;font-weight:700;margin-right:6px;text-transform:uppercase;
+    font-size:.6rem;letter-spacing:.06em;}
+  .change[data-op="added"] i{color:var(--allow);}
+  .change[data-op="deleted"] i{color:var(--deny);}
+  .change[data-op="replaced"] i{color:var(--accent);}
+
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;align-items:stretch;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    padding:7px 12px;box-shadow:var(--shadow);font-size:.72rem;color:var(--muted);}
+  .stat b{display:block;font-family:var(--mono);font-size:1.15rem;color:var(--ink);
+    font-variant-numeric:tabular-nums;font-weight:600;}
+  .stat[data-cat]{cursor:pointer;}
+  .stat[data-cat]:hover{border-color:var(--accent);}
+  .stat.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+  .stat.good b{color:var(--allow);}
+  .stat.bad b{color:var(--deny);}
+
+  .warnbar{background:var(--world-soft);border:1px solid var(--world);border-radius:10px;
+    color:var(--ink-2);font-size:.78rem;padding:8px 12px;margin:0 0 12px;}
+  .warnbar b{color:var(--world)}
+
+  .layout{display:grid;grid-template-columns:1fr minmax(260px,360px);gap:16px;align-items:start;}
+  @media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+  .stage-wrap{position:relative;background:var(--stage);border:1px solid var(--line);
+    border-radius:16px;box-shadow:var(--shadow);padding:18px;}
+  .stage{position:relative;}
+  #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;}
+  .grid{position:relative;z-index:2;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
+
+  .ns{background:color-mix(in srgb, var(--surface) 72%, transparent);
+    border:1px solid var(--line);border-radius:12px;
+    padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0;}
+  .ns-name{font-family:var(--mono);font-size:.74rem;font-weight:600;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chips{display:flex;flex-direction:column;gap:6px;}
+  .chip{font-family:var(--mono);text-align:left;
+    background:color-mix(in srgb, var(--surface-2) 86%, transparent);
+    border:1px solid var(--line);border-left:3px solid var(--faint);border-radius:8px;
+    padding:6px 9px;color:var(--ink);font-size:.78rem;display:flex;justify-content:space-between;
+    gap:6px;align-items:baseline;transition:opacity .15s,border-color .15s;min-width:0;}
+  .chip .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip .kd{font-size:.6rem;color:var(--faint);text-transform:uppercase;flex:none;}
+  .chip[data-kind="Deployment"]{border-left-color:var(--accent)}
+  .chip[data-kind="StatefulSet"]{border-left-color:#7b83c4}
+  .chip[data-kind="DaemonSet"]{border-left-color:var(--allow)}
+  .chip[data-kind="CronJob"],.chip[data-kind="Job"]{border-left-color:var(--world)}
+  .chip.lit{border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent) inset;}
+  body.filtering .chip:not(.lit){opacity:.35;}
+  body.filtering .ns:not(.has-lit){opacity:.5;}
+
+  .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
+  .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
+    border:1px solid var(--world);border-radius:8px;padding:5px 9px;}
+  .ext.lit{outline:2px solid var(--accent);}
+  body.filtering .ext:not(.lit){opacity:.4;}
+
+  /* Delta edges: the entire vocabulary of this view.
+     add — a passage the draft opens (allow green, marching forward).
+     del — a passage the draft closes (deny red, dashed: no longer there).
+     hopen — one side changed but the passage stays blocked (deny dotted). */
+  .edge{fill:none;}
+  .edge.add{stroke:var(--allow);stroke-width:2.2;opacity:.9;
+    stroke-dasharray:7 5;animation:flowdash 1.1s linear infinite;}
+  .edge.del{stroke:var(--deny);stroke-width:2.2;opacity:.9;stroke-dasharray:6 5;}
+  .edge.hopen{stroke:var(--deny);stroke-width:1.7;opacity:.7;
+    stroke-dasharray:2 4;stroke-linecap:round;}
+  .edge.hot{stroke-width:3;opacity:1;}
+  body.filtering .edge:not(.keep){opacity:.08;}
+  body.filtering .elabel:not(.keep){opacity:.12;}
+  @keyframes flowdash{to{stroke-dashoffset:-12}}
+  .elabel{font-family:var(--mono);font-size:10px;font-weight:600;
+    paint-order:stroke;stroke:var(--stage);stroke-width:4;stroke-linejoin:round;text-anchor:middle;}
+  .elabel.add{fill:var(--allow);}
+  .elabel.del{fill:var(--deny);}
+  .elabel.hopen{fill:var(--deny);}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);padding:16px;position:sticky;top:14px;font-size:.84rem;
+    max-height:calc(100vh - 28px);overflow-y:auto;overscroll-behavior:contain;}
+  .pgroup{margin-top:14px;}
+  .pgroup:first-child{margin-top:0;}
+  .pgroup h4{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-2);margin:0 0 6px;}
+  .pgroup h4 .n{color:var(--faint);font-weight:600;}
+  .row{padding:7px 8px;border-top:1px solid var(--line);cursor:default;border-radius:6px;}
+  .row:hover{background:color-mix(in srgb, var(--accent-soft) 45%, transparent);}
+  .row .pair{font-family:var(--mono);font-size:.76rem;font-weight:600;word-break:break-all;}
+  .row .pair .arrow{color:var(--faint);font-weight:400;margin:0 4px;}
+  .row .ports{font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:2px;}
+  .row .via{font-family:var(--mono);font-size:.64rem;color:var(--faint);margin-top:2px;word-break:break-all;}
+  .row.add .pair::before{content:"+";color:var(--allow);margin-right:6px;font-weight:700;}
+  .row.del .pair::before{content:"−";color:var(--deny);margin-right:6px;font-weight:700;}
+  .row.hopen .pair::before{content:"!";color:var(--deny);margin-right:6px;font-weight:700;}
+  .tag{display:inline-block;font-family:var(--mono);font-size:.58rem;border-radius:4px;
+    padding:1px 5px;margin:3px 5px 0 0;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+  .tag.heal{color:var(--allow);background:var(--allow-soft);}
+  .tag.fix{color:var(--allow);background:var(--allow-soft);}
+  .tag.break{color:var(--deny);background:var(--deny-soft);}
+  .tag.side{color:var(--world);background:var(--world-soft);}
+  .note{font-size:.72rem;color:var(--muted);margin-top:2px;}
+  .empty{color:var(--muted);font-size:.76rem;padding:6px 0 2px;}
+  .clean{margin-top:14px;background:var(--allow-soft);border:1px solid var(--allow);
+    border-radius:10px;padding:10px 12px;font-size:.8rem;color:var(--ink-2);}
+  .clean b{color:var(--allow);}
+
+  .btn{background:var(--surface);border:1px solid var(--line);border-radius:999px;
+    padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
+  .btn:hover{border-color:var(--line-2)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px;
+    font-family:var(--mono);font-size:.72rem;color:var(--muted);}
+  .lk{display:inline-block;width:20px;border-top:2.5px solid var(--allow);vertical-align:middle;margin-right:5px;}
+  .lk.del{border-color:var(--deny);border-top-style:dashed}
+  .lk.hopen{border-color:var(--deny);border-top-style:dotted}
+
+  footer{margin-top:18px;font-size:.74rem;color:var(--faint);}
+  footer a{color:var(--accent)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="titleblock">
+    <h1><b>Portolan</b> what-if — policy delta</h1>
+    <p class="meta" id="meta"></p>
+  </div>
+  <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
+</header>
+<div class="changeset" id="changeset"></div>
+<div class="stats" id="stats"></div>
+<div class="warnbar" id="warnbar" hidden></div>
+
+<div class="layout">
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <div class="grid" id="grid"></div>
+      <svg id="edges" aria-hidden="true"></svg>
+    </div>
+    <div class="rail" id="rail"></div>
+    <div class="legend">
+      <span><i class="lk"></i>new passage (draft opens it)</span>
+      <span><i class="lk del"></i>removed passage (draft closes it)</span>
+      <span><i class="lk hopen"></i>half-open introduced: one side changed, still blocked</span>
+    </div>
+  </div>
+  <aside class="panel" id="panel"></aside>
+</div>
+<footer id="foot"></footer>
+
+<script>
+const DATA = __PORTOLAN_DATA__;
+(function(){
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  // ---------- theme ----------
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v){ try { localStorage.setItem(k, v); } catch { /* no persistence */ } },
+  };
+  const root = document.documentElement;
+  const savedTheme = store.get("portolan-theme");
+  root.dataset.theme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  $("#theme").addEventListener("click", () => {
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    store.set("portolan-theme", root.dataset.theme);
+  });
+
+  // ---------- data ----------
+  const ADDED = DATA.added || [], REMOVED = DATA.removed || [], HOPEN = DATA.halfOpen || [];
+  const FIXES = DATA.fixesDrops || [], BREAKS = DATA.breaksFlows || [];
+  const fixesByPair = new Map(), breaksByPair = new Map();
+  FIXES.forEach(f => {
+    const k = f.s + "|" + f.d;
+    if (!fixesByPair.has(k)) fixesByPair.set(k, []);
+    fixesByPair.get(k).push(f);
+  });
+  BREAKS.forEach(f => {
+    const k = f.s + "|" + f.d;
+    if (!breaksByPair.has(k)) breaksByPair.set(k, []);
+    breaksByPair.get(k).push(f);
+  });
+  // deltas: the one flat list every layer draws from.
+  const deltas = [
+    ...ADDED.map(d => ({...d, cat: "add"})),
+    ...REMOVED.map(d => ({...d, cat: "del"})),
+    ...HOPEN.map(h => ({s: h.s, d: h.d, ports: h.ports, side: h.side, cat: "hopen"})),
+  ];
+
+  // ---------- header ----------
+  const m = DATA.meta;
+  const when = new Date(m.takenAt);
+  const flows = m.flowsOK ? ` · observed window <b>${m.flowWindow}</b> (${m.flowsSeen} events)` : "";
+  $("#meta").innerHTML =
+    `simulated with <b>Cilium's policy engine</b> against snapshot <b>${when.toISOString().replace("T"," ").slice(0,16)} UTC</b>` +
+    (m.cluster ? ` · cluster <b>${m.cluster}</b>` : "") +
+    ` · ${m.policies} policies · ${m.workloads} workloads${flows}`;
+  $("#foot").innerHTML = `Generated by ${m.tool} — ${DATA.probes.toLocaleString()} verdicts probed per repository ` +
+    `(verdict-grade: <a href="https://github.com/T0ut4t1s/portolan">cilium engine, in-process</a>).`;
+
+  // ---------- change set ----------
+  const cs = $("#changeset");
+  (DATA.changes || []).forEach(c => {
+    const sp = c.indexOf(" ");
+    const op = c.slice(0, sp), what = c.slice(sp + 1);
+    const el = document.createElement("span");
+    el.className = "change"; el.dataset.op = op;
+    const i = document.createElement("i"); i.textContent = op;
+    el.appendChild(i); el.appendChild(document.createTextNode(what));
+    cs.appendChild(el);
+  });
+
+  // ---------- stats ----------
+  let filter = null; // null | add | del | hopen | fix | break
+  const stats = $("#stats");
+  const statDefs = [
+    { cat: "add",   label: "new passages",         n: ADDED.length,   cls: ADDED.length ? "good" : "" },
+    { cat: "del",   label: "removed passages",     n: REMOVED.length, cls: REMOVED.length ? "bad" : "" },
+    { cat: "hopen", label: "half-open introduced", n: HOPEN.length,   cls: HOPEN.length ? "bad" : "" },
+  ];
+  if (m.flowsOK) statDefs.push(
+    { cat: "fix",   label: "fixes observed drops", n: FIXES.length,  cls: FIXES.length ? "good" : "" },
+    { cat: "break", label: "breaks live flows",    n: BREAKS.length, cls: BREAKS.length ? "bad" : "" },
+  );
+  statDefs.forEach(sd => {
+    const el = document.createElement("button");
+    el.className = "stat " + sd.cls; el.dataset.cat = sd.cat;
+    el.innerHTML = `<b>${sd.n}</b>${sd.label}`;
+    el.addEventListener("click", () => {
+      filter = filter === sd.cat ? null : (deltasFor(sd.cat).length ? sd.cat : null);
+      redraw();
+    });
+    stats.appendChild(el);
+  });
+  const probeStat = document.createElement("span");
+  probeStat.className = "stat";
+  probeStat.innerHTML = `<b>${DATA.probes.toLocaleString()}</b>verdicts probed`;
+  stats.appendChild(probeStat);
+
+  // deltasFor: the delta set a stat chip filters to. fix/break are
+  // observed-traffic views of add/del pairs.
+  function deltasFor(cat){
+    if (cat === "fix")   return deltas.filter(d => d.cat === "add" && fixesByPair.has(d.s + "|" + d.d));
+    if (cat === "break") return deltas.filter(d => d.cat === "del" && breaksByPair.has(d.s + "|" + d.d));
+    return deltas.filter(d => d.cat === cat);
+  }
+
+  // ---------- warnings ----------
+  if (DATA.warnings && DATA.warnings.length){
+    const wb = $("#warnbar");
+    wb.hidden = false;
+    wb.innerHTML = "<b>heads-up:</b> " + DATA.warnings.map(esc).join(" · ");
+  }
+
+  // ---------- build grid ----------
+  const grid = $("#grid"), rail = $("#rail");
+  (DATA.namespaces || []).forEach(ns => {
+    const card = document.createElement("div");
+    card.className = "ns"; card.dataset.ns = ns.name;
+    const head = document.createElement("div");
+    head.className = "ns-name"; head.textContent = ns.name;
+    card.appendChild(head);
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    ns.workloads.forEach(w => {
+      const c = document.createElement("div");
+      c.className = "chip"; c.dataset.id = w.id; c.dataset.kind = w.kind;
+      c.innerHTML = `<span class="nm"></span><span class="kd"></span>`;
+      c.querySelector(".nm").textContent = w.name;
+      c.querySelector(".kd").textContent = w.kind;
+      chips.appendChild(c);
+    });
+    card.appendChild(chips);
+    grid.appendChild(card);
+  });
+  (DATA.externals || []).forEach(x => {
+    const b = document.createElement("span");
+    b.className = "ext"; b.dataset.id = x.id;
+    b.textContent = x.label;
+    rail.appendChild(b);
+  });
+
+  // ---------- geometry (map.html's docking bezier) ----------
+  const stage = $("#stage");
+  const svg = $("#edges");
+  function anchor(el){
+    const s = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2,
+             w: r.width, h: r.height };
+  }
+  function elFor(id){
+    return grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`)
+        || rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+  }
+  function drawPath(a, b, cls, label, keep){
+    const dx = b.x - a.x, dy = b.y - a.y;
+    let p0, p1, d, lx, ly;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const s = dx >= 0 ? 1 : -1;
+      p0 = { x: a.x + s * (a.w / 2 + 4), y: a.y };
+      p1 = { x: b.x - s * (b.w / 2 + 6), y: b.y };
+      const mx = (p0.x + p1.x) / 2;
+      d = `M${p0.x},${p0.y} C${mx},${p0.y} ${mx},${p1.y} ${p1.x},${p1.y}`;
+      lx = mx; ly = (p0.y + p1.y) / 2 - 3;
+    } else {
+      const s = dy >= 0 ? 1 : -1;
+      p0 = { x: a.x, y: a.y + s * (a.h / 2 + 4) };
+      p1 = { x: b.x, y: b.y - s * (b.h / 2 + 6) };
+      const my = (p0.y + p1.y) / 2;
+      d = `M${p0.x},${p0.y} C${p0.x},${my} ${p1.x},${my} ${p1.x},${p1.y}`;
+      lx = (p0.x + p1.x) / 2; ly = my - 3;
+    }
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("class", cls + (keep ? " keep" : ""));
+    path.setAttribute("d", d);
+    path.setAttribute("marker-end", "url(#ah)");
+    svg.appendChild(path);
+    if (label){
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("class", "elabel " + cls.replace("edge","").trim() + (keep ? " keep" : ""));
+      t.setAttribute("x", lx); t.setAttribute("y", ly);
+      t.textContent = label;
+      svg.appendChild(t);
+    }
+  }
+
+  const portLabel = ports => {
+    if (!ports || !ports.length) return "";
+    return ports.length > 2 ? ports.slice(0, 2).join(", ") + " +" + (ports.length - 2) : ports.join(", ");
+  };
+
+  // ---------- draw ----------
+  let hotKey = null; // "cat|s|d" while a panel row is hovered
+  function redraw(){
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
+      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
+    const rect = stage.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+
+    const kept = filter ? new Set(deltasFor(filter).map(d => d.cat + "|" + d.s + "|" + d.d)) : null;
+    document.body.classList.toggle("filtering", !!filter);
+    document.querySelectorAll(".stat[data-cat]").forEach(el =>
+      el.classList.toggle("on", el.dataset.cat === filter));
+
+    const litNodes = new Set();
+    deltas.forEach(dl => {
+      const key = dl.cat + "|" + dl.s + "|" + dl.d;
+      const es = elFor(dl.s), ed = elFor(dl.d);
+      if (!es || !ed) return;
+      const keep = !kept || kept.has(key);
+      if (keep && kept) { litNodes.add(dl.s); litNodes.add(dl.d); }
+      let cls = "edge " + dl.cat;
+      if (hotKey === key) cls += " hot";
+      drawPath(anchor(es), anchor(ed), cls, portLabel(dl.ports), keep && !!kept);
+    });
+
+    document.querySelectorAll(".chip").forEach(c =>
+      c.classList.toggle("lit", litNodes.has(c.dataset.id)));
+    document.querySelectorAll(".ext").forEach(c =>
+      c.classList.toggle("lit", litNodes.has(c.dataset.id)));
+    document.querySelectorAll(".ns").forEach(card =>
+      card.classList.toggle("has-lit", !!card.querySelector(".chip.lit")));
+  }
+
+  // ---------- panel ----------
+  const panel = $("#panel");
+  function pairHTML(s, d){
+    return `<span class="pair">${esc(s)}<span class="arrow">→</span>${esc(d)}</span>`;
+  }
+  function section(title, n){
+    const g = document.createElement("div");
+    g.className = "pgroup";
+    g.innerHTML = `<h4>${title} <span class="n">${n}</span></h4>`;
+    panel.appendChild(g);
+    return g;
+  }
+  function addRow(g, cat, dl, extra){
+    const r = document.createElement("div");
+    r.className = "row " + cat;
+    r.dataset.key = cat + "|" + dl.s + "|" + dl.d;
+    let html = pairHTML(dl.s, dl.d);
+    if (dl.ports && dl.ports.length) html += `<div class="ports">${esc(dl.ports.join(", "))}</div>`;
+    html += extra || "";
+    if (dl.via && dl.via.length) html += `<div class="via">via ${esc(dl.via.join(", "))}</div>`;
+    r.innerHTML = html;
+    r.addEventListener("mouseenter", () => { hotKey = r.dataset.key; redraw(); });
+    r.addEventListener("mouseleave", () => { hotKey = null; redraw(); });
+    g.appendChild(r);
+  }
+
+  if (!deltas.length){
+    const c = document.createElement("div");
+    c.className = "clean";
+    c.innerHTML = `<b>No verdict changes.</b> The change set alters no passage between any ` +
+      `workload/entity pair on any probed port${m.flowsOK ? " and touches no observed flow" : ""}.`;
+    panel.appendChild(c);
+  }
+
+  {
+    const g = section("new passages", ADDED.length);
+    ADDED.forEach(d => {
+      let extra = "";
+      if (d.healsHalfOpen) extra += `<span class="tag heal">heals half-open</span>`;
+      const fx = fixesByPair.get(d.s + "|" + d.d);
+      if (fx) fx.forEach(f =>
+        extra += `<span class="tag fix">fixes drop ${esc(f.port)} ×${f.n}</span>`);
+      addRow(g, "add", d, extra ? `<div>${extra}</div>` : "");
+    });
+    if (!ADDED.length) g.insertAdjacentHTML("beforeend", `<div class="empty">none</div>`);
+  }
+  {
+    const g = section("removed passages", REMOVED.length);
+    REMOVED.forEach(d => {
+      let extra = "";
+      const bk = breaksByPair.get(d.s + "|" + d.d);
+      if (bk) bk.forEach(f =>
+        extra += `<span class="tag break">breaks live flow ${esc(f.port)} ×${f.n}</span>`);
+      addRow(g, "del", d, extra ? `<div>${extra}</div>` : "");
+    });
+    if (!REMOVED.length) g.insertAdjacentHTML("beforeend", `<div class="empty">none</div>`);
+  }
+  if (HOPEN.length){
+    const g = section("half-open introduced", HOPEN.length);
+    HOPEN.forEach(h => {
+      const note = h.side === "egress"
+        ? "egress now declared but the receiver still denies — add the ingress allow"
+        : "receiver would now accept but the sender still cannot send — add the egress allow";
+      addRow(g, "hopen", h, `<div><span class="tag side">${h.side}</span></div><div class="note">${note}</div>`);
+    });
+  }
+  if (m.flowsOK && !FIXES.length && !BREAKS.length && deltas.length){
+    const c = document.createElement("div");
+    c.className = "clean";
+    c.innerHTML = `<b>Observed traffic untouched.</b> No flow seen in the ${esc(m.flowWindow)} window changes verdict.`;
+    panel.appendChild(c);
+  }
+
+  // ---------- reactive ----------
+  let raf = 0;
+  addEventListener("resize", () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(redraw); });
+  redraw();
+})();
+</script>
+</body>
+</html>

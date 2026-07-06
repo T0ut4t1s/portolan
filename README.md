@@ -71,7 +71,10 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   policy engine linked in-process — the same distillation pipeline the
   agent uses to program the datapath, fed identities built exactly the way
   the agent labels endpoints — not a reimplementation. Millions of
-  pair/port verdicts compute in seconds.
+  pair/port verdicts compute in seconds. Add `-o whatif.html` for the
+  **delta map**: the diff rendered visually — green passages the draft
+  opens, red ones it closes, half-open and broken-live-flow badges — in
+  the map's visual language, as a single self-contained file.
 
 ## What it deliberately does not do
 
@@ -127,6 +130,10 @@ portolan audit -i snapshot.json
 # What changed in the mesh between two captures?
 portolan diff snapshots/monday.json snapshots/today.json
 
+# Simulate a draft policy before it ships (text verdicts + visual delta map):
+portolan whatif -i snapshot.json -f draft-cnp.yaml -o whatif.html
+portolan whatif -i snapshot.json --delete CiliumNetworkPolicy/ns/name --fail-on-break
+
 # Or run the dashboard in-cluster (or anywhere with a kubeconfig):
 portolan serve --interval 15m --data /data
 #   GET /              the map        GET /audit.json     findings
@@ -134,14 +141,11 @@ portolan serve --interval 15m --data /data
 #   GET /healthz       liveness       GET /snapshot.json  latest capture
 ```
 
-`whatif` is in development — the CLI stub exists but returns "not
-implemented yet".
-
 ## Status
 
-Early but working: `snapshot`, `render`, `audit`, `diff`, and `serve`
-function today. The snapshot schema is versioned; breaking changes bump the
-version.
+Early but working: `snapshot`, `render`, `audit`, `diff`, `serve`, and
+`whatif` function today. The snapshot schema is versioned; breaking changes
+bump the version.
 
 ## License
 
