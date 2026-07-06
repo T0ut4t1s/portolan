@@ -68,7 +68,12 @@
     padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
   .btn:hover{border-color:var(--line-2)}
   .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);}
-  .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);margin-left:auto;}
+  /* The hint gets its own full-width line, left-aligned — margin-left:auto
+     in the flex row made its text start mid-page at the leftover space. */
+  .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);flex-basis:100%;}
+  .hint-x{background:none;border:none;padding:0 2px;margin-left:4px;cursor:pointer;
+    color:var(--faint);font-size:.95rem;line-height:1;vertical-align:middle;}
+  .hint-x:hover{color:var(--ink);}
 
   .layout{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:start;}
   @media (max-width:900px){.layout{grid-template-columns:1fr}}
@@ -134,9 +139,15 @@
      as units, labeled on the border line like the findings group. */
   .ctlgroup{position:relative;display:flex;align-items:center;gap:6px;
     border:1px solid var(--line-2);border-radius:12px;padding:10px 10px 8px;}
-  /* Reset promoted to the stats row, far right — the escape hatch should
-     be easy to find when the lines get overwhelming. */
-  .stat-reset{margin-left:auto;align-self:center;font-size:.88rem;padding:9px 18px;}
+  /* Reset lives in the stats row as an inverted chip right beside the
+     findings group — same shape as the inventory chips, opposite colors,
+     so the escape hatch stands out without breaking the row's rhythm. */
+  .stat-reset{margin-left:8px;cursor:pointer;font:inherit;text-align:left;
+    background:var(--accent-soft);border-color:var(--accent);color:var(--muted);}
+  .stat-reset b{color:var(--accent);}
+  .stat-reset:hover{background:var(--accent);color:var(--accent-soft);}
+  .stat-reset:hover b{color:var(--surface);}
+  .stat-reset:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
   .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
   .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
@@ -264,7 +275,8 @@
     <button class="btn" id="audit" aria-pressed="false">audit</button>
     <button class="btn" id="deadbtn" aria-pressed="false" hidden title="show selector references matching no live workload as phantom nodes">unmatched</button>
   </span>
-  <span class="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
+  <span class="hint" id="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it
+    <button class="hint-x" id="hint-x" aria-label="dismiss hint" title="dismiss">×</button></span>
 </div>
 
 <div class="layout">
@@ -317,6 +329,14 @@ const DATA = __PORTOLAN_DATA__;
   $("#theme").addEventListener("click", () => {
     root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
     store.set("portolan-theme", root.dataset.theme);
+  });
+
+  // The interaction hint is dismissible (and stays dismissed) — it earns
+  // its space exactly once.
+  if (store.get("portolan-hint") === "off") $("#hint").hidden = true;
+  $("#hint-x").addEventListener("click", () => {
+    $("#hint").hidden = true;
+    store.set("portolan-hint", "off");
   });
 
   // ---------- indexes ----------
@@ -422,7 +442,7 @@ const DATA = __PORTOLAN_DATA__;
     `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
   $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
     `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>` +
-    `<button class="btn stat-reset" id="reset" title="clear all selections and filters">reset</button>`;
+    `<button class="stat stat-reset" id="reset" title="clear all selections and filters"><b>↺</b>reset</button>`;
   $("#stats").addEventListener("click", e => {
     const s = e.target.closest(".stat[data-goto]");
     if (!s) return;
