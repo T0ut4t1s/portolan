@@ -60,10 +60,18 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   matching no live workload as phantom nodes docked where the missing
   workload would sit — dormant rules you can see, hover, and trace to their
   declaring policy.
-- **What-if** *(roadmap)* — feed it a draft policy and get the blast radius:
-  which flows it newly permits, which observed drops it would fix, what it
-  removes. Powered by Cilium's own policy engine, not a reimplementation — so
-  verdicts match what the CNI will actually do.
+- **What-if** — `portolan whatif -i snapshot.json -f draft.yaml` computes the
+  blast radius of a draft change (add, replace, or `--delete`) before it
+  ships: passages it opens (flagging which heal existing half-opens),
+  passages it removes, and **half-opens it would introduce** — the
+  one-sided-rule mistake caught at review time instead of in production.
+  With flow data in the snapshot it also reports which observed drops the
+  draft fixes and which observed live flows it would **break**
+  (`--fail-on-break` gates CI on that). Verdicts come from Cilium's own
+  policy engine linked in-process — the same distillation pipeline the
+  agent uses to program the datapath, fed identities built exactly the way
+  the agent labels endpoints — not a reimplementation. Millions of
+  pair/port verdicts compute in seconds.
 
 ## What it deliberately does not do
 

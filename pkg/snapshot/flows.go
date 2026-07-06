@@ -47,10 +47,13 @@ const (
 )
 
 // entityPriority orders Cilium reserved identities for peers carrying more
-// than one (e.g. host+kube-apiserver): most specific first.
+// than one. Host outranks kube-apiserver: on a control-plane node the host
+// identity (1) CARRIES the kube-apiserver label, while the dedicated
+// kube-apiserver identity (7) is only used for remote peers — naming such
+// traffic "kube-apiserver" would point whatif at the wrong identity.
 var entityPriority = []string{
-	"kube-apiserver",
 	"host",
+	"kube-apiserver",
 	"remote-node",
 	"ingress",
 	"health",

@@ -46,7 +46,7 @@ func main() {
 	case "diff":
 		err = cmdDiff(os.Args[2:])
 	case "whatif":
-		err = fmt.Errorf("whatif: not implemented yet (roadmap)")
+		err = cmdWhatif(os.Args[2:])
 	case "serve":
 		err = cmdServe(ctx, os.Args[2:])
 	case "version":
@@ -72,8 +72,8 @@ Commands:
   render     render a snapshot to a self-contained HTML map
   audit      report half-open passages, deny gaps, and dead selector refs
   diff       compare two snapshots (policies and derived edges)
-  whatif     blast radius of a draft policy (roadmap)
-  serve      in-cluster dashboard (roadmap)
+  whatif     blast radius of a draft policy change (cilium engine verdicts)
+  serve      in-cluster dashboard (collects on an interval, serves the map)
   version    print version
 
 Run 'portolan <command> -h' for that command's flags.

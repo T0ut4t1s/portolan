@@ -120,8 +120,15 @@
   .stat[data-goto]{cursor:pointer;}
   .stat[data-goto]:hover{border-color:var(--accent);}
   .stat.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
-  .stat.push{margin-left:auto;}
   .stats{align-items:stretch;}
+  /* Findings live in their own bordered group, labeled on the border line —
+     the stats row reads as facts | findings. */
+  .findgroup{position:relative;display:flex;gap:8px;border:1px solid var(--line-2);
+    border-radius:12px;padding:9px 10px 6px;margin-left:8px;}
+  .findlabel{position:absolute;top:-7px;left:10px;background:var(--bg);padding:0 6px;
+    font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);line-height:1;}
+  .findgroup .stat{box-shadow:none;}
 
   .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
   .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
@@ -394,12 +401,16 @@ const DATA = __PORTOLAN_DATA__;
   // inventory — click → the map contracts to those edges (with each
   // involved workload's neighborhood for context) and the audit panel
   // opens scrolled to the group. Click again to release.
-  // Zero findings → inert chip: nothing to filter to.
-  statDefs.push([half, "half-open", "push", half ? "aud-half" : ""]);
-  if (FLOWS) statDefs.push([FLOWS.drops.length, "observed drops",
+  // Zero findings → inert chip: nothing to filter to. Finding chips sit in
+  // their own bordered "findings" group right after the inventory chips,
+  // so the row reads as facts | findings.
+  const findDefs = [[half, "half-open", "", half ? "aud-half" : ""]];
+  if (FLOWS) findDefs.push([FLOWS.drops.length, "observed drops",
     FLOWS.drops.length ? "bad" : "", FLOWS.drops.length ? "aud-drops" : ""]);
-  $("#stats").innerHTML = statDefs.map(([v,l,cls,goto]) =>
-    `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`).join("");
+  const chipHTML = ([v,l,cls,goto]) =>
+    `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
+  $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
+    `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>`;
   $("#stats").addEventListener("click", e => {
     const s = e.target.closest(".stat[data-goto]");
     if (!s) return;
@@ -652,8 +663,8 @@ const DATA = __PORTOLAN_DATA__;
           egress side: <b>${esc(sideDesc(e.eg, e.beg))}</b><br>
           ingress side: <b>${esc(sideDesc(e.in, e.bin))}</b>
           <ul>${e.policies.map(p => `<li><button class="pol" data-pol="${esc(p)}">${esc(p)}</button></li>`).join("")}</ul>
-          Declared topology only — for an enforcement verdict, use
-          <b>portolan whatif</b> (roadmap).</div>`;
+          Declared topology only — for an enforcement verdict, run
+          <b>portolan whatif</b> against this snapshot.</div>`;
     } else {
       const out = (edgesByNode.get(a) || []).filter(x => x.s === a);
       const inn = (edgesByNode.get(b) || []).filter(x => x.d === b);

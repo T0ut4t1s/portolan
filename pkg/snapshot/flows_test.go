@@ -70,10 +70,11 @@ func TestPeerFromEndpoint(t *testing.T) {
 			isWorkload: true,
 		},
 		{
-			// host+kube-apiserver both present: most specific wins.
+			// host+kube-apiserver both present: this is identity 1 (a
+			// control-plane host), not the remote kube-apiserver identity.
 			name:       "reserved identity priority",
 			ep:         reservedEP("reserved:host", "reserved:kube-apiserver"),
-			want:       FlowPeer{Entity: "kube-apiserver"},
+			want:       FlowPeer{Entity: "host"},
 			isWorkload: false,
 		},
 		{
