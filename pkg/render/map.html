@@ -164,12 +164,15 @@
   .stat-wif{margin-left:8px;cursor:pointer;font:inherit;text-align:left;
     display:flex;flex-direction:column;justify-content:center;}
   .stat-wif b:empty{display:none;} /* no glyph when nothing is projected */
-  .stat-wif:hover{border-color:var(--accent);}
+  .stat-wif:hover{background:var(--accent);color:var(--accent-soft);border-color:var(--accent);}
+  .stat-wif:hover b{color:var(--surface);}
   .stat-wif[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);
     box-shadow:0 0 0 1px var(--accent);}
   .stat-wif[aria-pressed="true"] b{color:var(--accent);}
   .stat-wif.live{background:var(--allow-soft);border-color:var(--allow);}
   .stat-wif.live b{color:var(--allow);}
+  .stat-wif.live:hover{background:var(--allow);color:var(--allow-soft);}
+  .stat-wif.live:hover b{color:var(--surface);}
   .stat-wif.live[aria-pressed="true"]{box-shadow:0 0 0 1px var(--allow);}
   .stat-wif:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
@@ -186,12 +189,12 @@
   .wif-form .search{max-width:none;flex:none;}
   .wif-sel{background:var(--surface);border:1px solid var(--line);border-radius:999px;
     padding:8px 12px;font:inherit;font-size:.78rem;color:var(--ink);}
-  /* The commit action earns full width and full accent — it must not
-     disappear among the inputs. */
+  /* Commit actions follow the reset chip's language: full-color border,
+     soft fill, full inversion on hover. */
   .wif-add{font:inherit;font-size:.84rem;font-weight:600;cursor:pointer;
-    background:var(--accent);color:var(--surface);border:1px solid var(--accent);
+    background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);
     border-radius:999px;padding:9px 14px;width:100%;}
-  .wif-add:hover{filter:brightness(1.08);}
+  .wif-add:hover{background:var(--accent);color:var(--surface);}
   .wif-add:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .wif-err{color:var(--deny);font-size:.74rem;min-height:1em;}
   .wif-head2{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
@@ -223,10 +226,23 @@
   .wif-actions{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;}
   .wif-note{font-family:var(--mono);font-size:.7rem;color:var(--faint);}
   /* Draft delta edges: the staged rules' new passages march bright green
-     over the calm declared/observed context. */
+     over the calm declared/observed context; staged REMOVALS draw the
+     passages they would close as thick dashed red. */
   .edge.wadd{stroke:var(--allow);stroke-width:2.6;opacity:1;
     stroke-dasharray:7 5;animation:flowdash 1.1s linear infinite;}
   .elabel.wadd{fill:var(--allow);font-size:11px;}
+  .edge.wdel{stroke:var(--deny);stroke-width:2.4;opacity:.95;stroke-dasharray:6 5;}
+  .elabel.wdel{fill:var(--deny);font-size:11px;}
+  .wif-or{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);text-align:center;margin:2px 0;}
+  /* NB: not ".deny" — that class is the namespace default-deny badge and
+     its uppercase/mono styling would leak onto the button. */
+  .wif-add.rmpol{background:var(--deny-soft);border-color:var(--deny);color:var(--deny);}
+  .wif-add.rmpol:hover{background:var(--deny);color:var(--surface);}
+  .wif-rule.delrule{border-left-color:var(--deny);}
+  .wif-rule.delrule .idx{color:var(--deny);background:var(--deny-soft);}
+  .wif-rule.delrule .sum b{color:var(--deny);}
+  .tag.break{color:var(--deny);background:var(--deny-soft);}
 
   .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
   .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
@@ -371,11 +387,18 @@
       <input class="search" id="wf-to" list="nodelist" placeholder="to…" aria-label="Rule destination">
       <input class="search" id="wf-ports" placeholder="ports: 8080, 53/UDP — empty allows all" aria-label="Rule ports">
       <select class="wif-sel" id="wf-sides" aria-label="Rule sides">
-        <option value="both">both sides (egress + ingress)</option>
-        <option value="egress">egress only (sender declares)</option>
-        <option value="ingress">ingress only (receiver accepts)</option>
+        <option value="both">both halves (sender egress + receiver ingress)</option>
+        <option value="egress">egress half only (sender declares)</option>
+        <option value="ingress">ingress half only (receiver accepts)</option>
       </select>
-      <button class="wif-add" id="wf-add">Add rule</button>
+      <span class="wif-note">rules are directional: <b>from</b> is who initiates; replies
+        return automatically (connection tracking). Traffic initiated the other way
+        needs its own rule.</span>
+      <button class="wif-add" id="wf-add">Add Policy</button>
+      <div class="wif-or">— or stage a removal —</div>
+      <input class="search" id="wf-del" list="pollist" placeholder="existing policy… (Kind/namespace/name)" aria-label="Policy to remove">
+      <button class="wif-add rmpol" id="wf-delbtn">Remove Policy</button>
+      <datalist id="pollist"></datalist>
       <span class="wif-err" id="wf-err"></span>
     </div>
   </div>
@@ -720,17 +743,26 @@ const DATA = __PORTOLAN_DATA__;
   // compose with whatever view state is active — the stats-row chip
   // counts them.
   let wifOn = false, wifRules = [], wifSim = null, wifBusy = false, wifErrText = "", wifSeq = 0;
-  // wifTyping mirrors the composer's from/to text: while the panel is open
-  // it filters the map exactly like the search field, so locating the
-  // rule's endpoints IS the act of typing them. Cleared on add and ignored
-  // once the panel closes.
-  let wifTyping = "";
+  // wifTyping mirrors the composer's text fields: while the panel is open
+  // they filter the map like the search field — ALL non-empty fields at
+  // once (a card matching either endpoint stays), so locating both ends
+  // of a rule IS the act of typing them. Cleared on add; ignored once the
+  // panel closes.
+  let wifTyping = { from: "", to: "", del: "" };
+  const wifTypingActive = () =>
+    wifOn && !!(wifTyping.from || wifTyping.to || wifTyping.del);
+  // A row is either an allow rule {from,to,ports,sides,sel} or a staged
+  // policy removal {del,sel} — one list, one selection model.
   const wifSel = () => wifRules.filter(r => r.sel);
+  const wifAllows = () => wifRules.filter(r => !r.del);
+  const wifDels = () => wifRules.filter(r => r.del);
   const wifProjecting = () => wifSel().length > 0;
-  const wifPairs = rules => new Set(rules.map(r => r.from + "|" + r.to));
-  // wifViewDeltas: the sim result filtered to the selected rules' pairs.
-  // Deltas not attributable to ANY rule (selector side effects) always
-  // show — hiding a side effect would defeat the point of simulating.
+  const wifPairs = rules => new Set(rules.filter(r => !r.del).map(r => r.from + "|" + r.to));
+  // wifViewDeltas: the sim result filtered to the selected rows. Allow
+  // deltas match by pair; REMOVED deltas match by provenance — the engine
+  // names the deleted policy in each removed delta's via. Deltas not
+  // attributable to ANY staged row (selector side effects) always show —
+  // hiding a side effect would defeat the point of simulating.
   function wifViewDeltas(){
     if (!wifSim || !wifSim.result) return null;
     const r = wifSim.result;
@@ -738,16 +770,36 @@ const DATA = __PORTOLAN_DATA__;
     const keep = d => selP.has(d.s + "|" + d.d) || !allP.has(d.s + "|" + d.d);
     const added = (r.added || []).filter(keep);
     const hopen = (r.halfOpenIntroduced || []).filter(keep);
+    const selDel = new Set(wifSel().filter(x => x.del).map(x => x.del));
+    const allDel = new Set(wifDels().map(x => x.del));
+    const keepRem = d => (d.via || []).some(v => selDel.has(v)) ||
+                        !(d.via || []).some(v => allDel.has(v));
+    const removed = (r.removed || []).filter(keepRem);
+    const remPairs = new Set(removed.map(d => d.s + "|" + d.d));
     return {
-      added, hopen,
+      added, hopen, removed,
       fixes: (r.fixesDrops || []).filter(keep),
-      hidden: (r.added || []).length - added.length + (r.halfOpenIntroduced || []).length - hopen.length,
+      breaks: (r.breaksFlows || []).filter(f => remPairs.has(f.s + "|" + f.d)),
+      hidden: (r.added || []).length - added.length
+            + (r.halfOpenIntroduced || []).length - hopen.length
+            + (r.removed || []).length - removed.length,
     };
+  }
+  // wifScopeIds: the nodes the projected rows involve — allow endpoints
+  // plus every endpoint of a projected removal's closed passages.
+  function wifScopeIds(){
+    const ids = new Set();
+    wifSel().forEach(r => { if (!r.del) { ids.add(r.from); ids.add(r.to); } });
+    const v = wifViewDeltas();
+    if (v) v.removed.forEach(d => { ids.add(d.s); ids.add(d.d); });
+    return ids;
   }
 
   // findingEdges: the edge set behind a finding chip — the map filters to
-  // exactly these when the chip is active.
+  // exactly these when the chip is active. "audit" is the union: every
+  // half-open passage plus every observed drop, the full exception view.
   function findingEdges(kind){
+    if (kind === "audit") return [...DATA.edges.filter(halfOpen), ...(FLOWS ? FLOWS.drops : [])];
     return kind === "half" ? DATA.edges.filter(halfOpen) : (FLOWS ? FLOWS.drops : []);
   }
 
@@ -910,11 +962,23 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   function visibleNS(name){
-    // Composer typing takes over the text filter while the panel is open.
-    const q = (wifOn && wifTyping) ? wifTyping : query;
-    if (!q) return true;
     const ns = nsByName.get(name);
-    return name.includes(q) || ns.workloads.some(w => w.name.includes(q));
+    // Full ids match too — picking "calibre-web/cwa" from the autocomplete
+    // must keep filtering, not blank the grid.
+    const match = q => name.includes(q) ||
+      ns.workloads.some(w => w.name.includes(q) || w.id.includes(q));
+    // Composer typing takes over the text filter while the panel is open:
+    // every non-empty field applies, so a card matching EITHER endpoint
+    // (or the policy text) stays visible. A field holding an external
+    // (entity:/cidr:/fqdn:) matches no namespace card and must not
+    // constrain the grid — the rail shows it instead.
+    if (wifTypingActive()){
+      const extish = q => /^(entity|cidr|fqdn):/.test(q);
+      const qs = [wifTyping.from, wifTyping.to, wifTyping.del].filter(q => q && !extish(q));
+      return qs.length === 0 || qs.some(match);
+    }
+    if (!query) return true;
+    return match(query);
   }
 
   // neighborhoodNS: the namespaces a node's edges touch (plus its own).
@@ -933,7 +997,7 @@ const DATA = __PORTOLAN_DATA__;
     // projection vanishes exactly when the user focuses on it.
     if (wifProjecting()){
       const v = wifViewDeltas();
-      if (v) [...v.added, ...v.hopen].forEach(dl => {
+      if (v) [...v.added, ...v.hopen, ...v.removed].forEach(dl => {
         if (dl.s === id || dl.d === id)
           [homeNS(dl.s), homeNS(dl.d)].forEach(n => { if (n) set.add(n); });
       });
@@ -956,7 +1020,7 @@ const DATA = __PORTOLAN_DATA__;
     }));
     if (wifProjecting()){
       const v = wifViewDeltas();
-      if (v) [...v.added, ...v.hopen].forEach(dl => {
+      if (v) [...v.added, ...v.hopen, ...v.removed].forEach(dl => {
         if (dl.s === id && extById.has(dl.d)) s.add(dl.d);
         if (dl.d === id && extById.has(dl.s)) s.add(dl.s);
       });
@@ -1009,18 +1073,18 @@ const DATA = __PORTOLAN_DATA__;
       });
       if (contract.size === 0) contract = null; // empty finding set: don't blank the grid
     }
-    else if (wifOn && wifProjecting() && !wifTyping) {
-      // While the panel is open, the ticked rules drive the content: the
+    else if (wifOn && wifProjecting() && !wifTypingActive()) {
+      // While the panel is open, the ticked rows drive the content: the
       // grid contracts to the union of the selected scenarios — each
-      // endpoint plus its full neighborhood. Untick/tick and the view
-      // follows; close the panel and this contraction lifts entirely.
+      // involved node plus its full neighborhood. Untick/tick and the
+      // view follows; close the panel and this contraction lifts.
       contract = new Set();
-      wifSel().forEach(r => [r.from, r.to].forEach(id => {
+      wifScopeIds().forEach(id => {
         const ns = homeNS(id);
         if (!ns) return;
         contract.add(ns);
         neighborhoodNS(id).forEach(n => contract.add(n));
-      }));
+      });
       if (contract.size === 0) contract = null;
     }
     grid.querySelectorAll(".ns").forEach(card => {
@@ -1049,17 +1113,17 @@ const DATA = __PORTOLAN_DATA__;
       findingEdges(findingFilter).forEach(e => { ids.add(e.s); ids.add(e.d); });
       extKeep = keepFrom([...ids]);
     }
-    else if (wifOn && wifProjecting() && !wifTyping) {
-      const ids = new Set();
-      wifSel().forEach(r => { ids.add(r.from); ids.add(r.to); });
-      extKeep = keepFrom([...ids]);
+    else if (wifOn && wifProjecting() && !wifTypingActive()) {
+      extKeep = keepFrom([...wifScopeIds()]);
     }
     else {
-      const q = (wifOn && wifTyping) ? wifTyping : query;
-      if (q) {
+      const qs = wifTypingActive()
+        ? [wifTyping.from, wifTyping.to, wifTyping.del].filter(Boolean)
+        : (query ? [query] : []);
+      if (qs.length) {
         extKeep = new Set();
         extById.forEach((x, id) => {
-          if (id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q)) { extKeep.add(id); return; }
+          if (qs.some(q => id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q))) { extKeep.add(id); return; }
           if ([...(extNSIndex.get(id) || [])].some(visibleNS)) extKeep.add(id);
         });
       }
@@ -1070,12 +1134,6 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   function redraw(){
-    const rect = stage.getBoundingClientRect();
-    svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
-    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
-      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
-
     const active = hovered || pinned;
     document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter));
     document.querySelectorAll(".stat[data-goto]").forEach(s =>
@@ -1084,6 +1142,14 @@ const DATA = __PORTOLAN_DATA__;
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
     applyCardVisibility(); // contract BEFORE drawing so edge anchors are final
+    // Measure the stage only AFTER visibility changes reflow it — a
+    // viewBox taken beforehand scales every coordinate against the wrong
+    // canvas size when tick/untick grows or shrinks the grid.
+    const rect = stage.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
+      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path></marker></defs>`;
 
     // Brightness is earned by the cursor alone: hover = hot with ports;
     // every committed filter (pin, query, namespace focus) = calm mid.
@@ -1136,7 +1202,9 @@ const DATA = __PORTOLAN_DATA__;
                   rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
         if (c && !involved.has(id)) c.classList.add("adj");
       });
-      if (kind === "half") {
+      // In the combined audit view the set mixes both finding shapes:
+      // declared half-open edges carry a ports array, drops carry a port.
+      if (e.ports) {
         drawPath(anchor(es), anchor(ed), "edge hot half", e.ports.slice(0,2).join(","));
       } else {
         drawPath(anchor(es), anchor(ed), "edge drop", "✕ " + (e.port || e.reason));
@@ -1159,13 +1227,13 @@ const DATA = __PORTOLAN_DATA__;
     const v = wifViewDeltas();
     if (!v) return;
     // With the panel open and no other selection active, ring the
-    // scenario endpoints so the contracted view reads at a glance.
+    // scenario's involved nodes so the contracted view reads at a glance.
     if (wifOn && !hovered && !pinned && !queryPair && !focusNS && !findingFilter) {
-      wifSel().forEach(r => [r.from, r.to].forEach(id => {
+      wifScopeIds().forEach(id => {
         const c = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
                   rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
         if (c) c.classList.add("sel");
-      }));
+      });
     }
     const visEl = elFor; // elFor already skips filtered-out elements
     const fixes = new Map();
@@ -1187,6 +1255,21 @@ const DATA = __PORTOLAN_DATA__;
       if (!es || !ed) return;
       drawPath(anchor(es), anchor(ed), "edge hot half",
         h.ports.slice(0, 2).join(",") + " !half-open");
+    });
+    // Removals: every passage the deletion closes, dashed red — with the
+    // strongest possible warning where observed traffic rides it now.
+    const breaks = new Map();
+    v.breaks.forEach(f => {
+      const k = f.s + "|" + f.d;
+      breaks.set(k, (breaks.get(k) || 0) + f.n);
+    });
+    v.removed.forEach(dl => {
+      const es = visEl(dl.s), ed = visEl(dl.d);
+      if (!es || !ed) return;
+      let label = dl.ports.slice(0, 2).join(",");
+      const bk = breaks.get(dl.s + "|" + dl.d);
+      if (bk) label += " ✕breaks ×" + bk;
+      drawPath(anchor(es), anchor(ed), "edge wdel", label);
     });
   }
 
@@ -1407,17 +1490,21 @@ const DATA = __PORTOLAN_DATA__;
     if (!wifProjecting()) return "";
     const v = wifViewDeltas();
     if (!v) return "";
-    const mine = [...v.added.map(a => ({ ...a, ho: false })), ...v.hopen.map(h => ({ ...h, ho: true }))]
+    const mine = [...v.added.map(a => ({ ...a, kind: "add" })),
+                  ...v.hopen.map(h => ({ ...h, kind: "ho" })),
+                  ...v.removed.map(d => ({ ...d, kind: "del" }))]
       .filter(dl => dl.s === id || dl.d === id);
     if (!mine.length) return "";
+    const note = { add: "draft allow — simulated with the cilium engine, not applied",
+                   ho: "draft is one-sided — passage still blocked at the far end",
+                   del: "draft removal — this passage would close" };
     return `<div class="rgroup"><h4>◈ draft what-if passages (${mine.length})</h4>` +
       mine.map(dl => {
         const peer = dl.s === id ? dl.d : dl.s;
         const dir = dl.s === id ? "→" : "←";
         return `<div class="rule" data-es="${esc(dl.s)}" data-ed="${esc(dl.d)}"><span class="peer">${esc(dir)} ${esc(peer)}
-          <small>${dl.ho ? "draft is one-sided — passage still blocked at the far end"
-                        : "draft allow — simulated with the cilium engine, not applied"}</small></span>
-          <span class="ports${dl.ho ? " bad" : ""}">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
+          <small>${note[dl.kind]}</small></span>
+          <span class="ports${dl.kind !== "add" ? " bad" : ""}">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
       }).join("") + `</div>`;
   }
   function inspectNS(name){
@@ -1426,15 +1513,19 @@ const DATA = __PORTOLAN_DATA__;
     if (wifProjecting()){
       const v = wifViewDeltas();
       if (v){
-        const mine = [...v.added.map(a => ({ ...a, ho: false })), ...v.hopen.map(h => ({ ...h, ho: true }))]
+        const note = { add: "draft allow — simulated with the cilium engine, not applied",
+                       ho: "draft is one-sided — passage still blocked at the far end",
+                       del: "draft removal — this passage would close" };
+        const mine = [...v.added.map(a => ({ ...a, kind: "add" })),
+                      ...v.hopen.map(h => ({ ...h, kind: "ho" })),
+                      ...v.removed.map(d => ({ ...d, kind: "del" }))]
           .filter(dl => nodeNS(dl.s) === name || nodeNS(dl.d) === name);
         if (mine.length){
           wifRows = `<div class="rgroup"><h4>◈ draft what-if passages (${mine.length})</h4>` +
             mine.map(dl => `<div class="rule" data-es="${esc(dl.s)}" data-ed="${esc(dl.d)}">
               <span class="peer">${esc(dl.s)} → ${esc(dl.d)}
-                <small>${dl.ho ? "draft is one-sided — passage still blocked at the far end"
-                              : "draft allow — simulated with the cilium engine, not applied"}</small></span>
-              <span class="ports${dl.ho ? " bad" : ""}">${(dl.ports || []).map(esc).join(" ")}</span></div>`).join("") +
+                <small>${note[dl.kind]}</small></span>
+              <span class="ports${dl.kind !== "add" ? " bad" : ""}">${(dl.ports || []).map(esc).join(" ")}</span></div>`).join("") +
             `</div>`;
         }
       }
@@ -1494,11 +1585,16 @@ const DATA = __PORTOLAN_DATA__;
   [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
     if (e.key === "Enter") runQuery();
   }));
+  // The audit toggle is the combined exception view: the report in the
+  // inspector AND the map contracted to every half-open + observed drop.
   $("#audit").addEventListener("click", function(){
     auditMode = !auditMode; this.setAttribute("aria-pressed", String(auditMode));
-    findingFilter = null;
-    if (auditMode) { pinned = hovered = focusNS = queryPair = null; renderAudit(); redraw(); }
-    else { inspectHome(); redraw(); }
+    if (auditMode) {
+      pinned = hovered = focusNS = queryPair = null;
+      findingFilter = findingEdges("audit").length ? "audit" : null;
+      renderAudit(); redraw();
+    }
+    else { findingFilter = null; inspectHome(); redraw(); }
   });
   // Unmatched-refs toggle: dormant rules become phantom chips + dashed
   // edges, drawn where the missing workload would sit.
@@ -1546,16 +1642,33 @@ const DATA = __PORTOLAN_DATA__;
       <span class="peer">${esc(f.s)} → ${esc(f.d)}
         <small>observed ${esc(f.reason || "drop")} ×${f.n} in the window — the draft allows it</small></span>
       <span class="ports">${esc(f.port)}</span></div>`).join("");
+    const breaksByPair = new Map();
+    v.breaks.forEach(f => {
+      const k = f.s + "|" + f.d;
+      breaksByPair.set(k, (breaksByPair.get(k) || 0) + f.n);
+    });
+    const remRows = v.removed.map(dl => {
+      const bk = breaksByPair.get(dl.s + "|" + dl.d);
+      return `<div class="rule" data-es="${esc(dl.s)}" data-ed="${esc(dl.d)}">
+        <span class="peer">${esc(dl.s)} → ${esc(dl.d)}
+          ${bk ? `<span class="tag break">breaks live traffic ×${bk}</span>` : ""}
+          <small>was via ${(dl.via || []).map(esc).join(", ")}</small></span>
+        <span class="ports bad">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
+    }).join("");
     insp.innerHTML = `<p class="insp-kicker">what-if</p>
       <p class="insp-title">draft delta</p>
       <p class="insp-sub">${(r.policyChanges || []).map(esc).join("<br>")}</p>
+      ${v.breaks.length ? `<div class="half-warn"><b>removal cuts live traffic</b> — flows
+        observed in the capture window ride the passages being closed.</div>` : ""}
       ${hoRows ? `<div class="half-warn"><b>half-open introduced</b> — one side declared,
         the passage stays blocked at the other.</div>
         <div class="rgroup"><h4>! half-open introduced (${v.hopen.length})</h4>${hoRows}</div>` : ""}
-      <div class="rgroup"><h4>+ new passages (${v.added.length})</h4>
-        ${addRows || '<p class="empty">none — the selected rules change no verdict (these passages may already be open)</p>'}</div>
+      ${wifAllows().length ? `<div class="rgroup"><h4>+ new passages (${v.added.length})</h4>
+        ${addRows || '<p class="empty">none — the selected rules change no verdict (these passages may already be open)</p>'}</div>` : ""}
+      ${wifDels().length ? `<div class="rgroup"><h4>− removed passages (${v.removed.length})</h4>
+        ${remRows || '<p class="empty">none — the selected removals close no passage</p>'}</div>` : ""}
       ${fixRows ? `<div class="rgroup"><h4>✓ fixes observed drops (${v.fixes.length})</h4>${fixRows}</div>` : ""}
-      ${v.hidden ? `<p class="empty">${v.hidden} more delta(s) belong to unticked rules — tick them in the panel to project.</p>` : ""}`;
+      ${v.hidden ? `<p class="empty">${v.hidden} more delta(s) belong to unticked rows — tick them in the panel to project.</p>` : ""}`;
   }
 
   // The stats-row chip is the mode's status light: value slot counts the
@@ -1585,19 +1698,28 @@ const DATA = __PORTOLAN_DATA__;
   function renderWifPanel(){
     updateWifChip();
     $("#wf-clear").hidden = wifRules.length < 2;
-    $("#wf-list").innerHTML = wifRules.map((r, i) =>
-      `<div class="wif-rule${r.sel ? "" : " off"}">
-        <input type="checkbox" class="rsel" data-i="${i}" ${r.sel ? "checked" : ""}
-          title="project this rule on the map" aria-label="project rule ${i + 1} on the map">
-        <span class="idx">${i + 1}</span>
-        <span class="sum">${esc(r.from)} <b>→</b> ${esc(r.to)} · ${
-          r.ports.length ? esc(r.ports.join(", ")) : "all ports"}${
-          r.sides !== "both" ? " · " + esc(r.sides) + " only" : ""}</span>
-        <span class="acts">
-          <button class="btn gen" data-i="${i}" title="show this rule's CiliumNetworkPolicy YAML">generate</button>
-          <button class="btn rm" data-i="${i}" title="remove this rule">remove</button>
-        </span></div>`).join("")
-      || '<span class="wif-note">no rules yet — draft one on the left; the map below shows its effect</span>';
+    $("#wf-list").innerHTML = wifRules.map((r, i) => r.del
+      ? `<div class="wif-rule delrule${r.sel ? "" : " off"}">
+          <input type="checkbox" class="rsel" data-i="${i}" ${r.sel ? "checked" : ""}
+            title="project this removal on the map" aria-label="project removal ${i + 1} on the map">
+          <span class="idx">${i + 1}</span>
+          <span class="sum"><b>−</b> ${esc(r.del)}</span>
+          <span class="acts">
+            <button class="btn view" data-pol="${esc(r.del)}" title="show the policy's rules as enforced now">view</button>
+            <button class="btn rm" data-i="${i}" title="unstage this removal">remove</button>
+          </span></div>`
+      : `<div class="wif-rule${r.sel ? "" : " off"}">
+          <input type="checkbox" class="rsel" data-i="${i}" ${r.sel ? "checked" : ""}
+            title="project this rule on the map" aria-label="project rule ${i + 1} on the map">
+          <span class="idx">${i + 1}</span>
+          <span class="sum">${esc(r.from)} <b>→</b> ${esc(r.to)} · ${
+            r.ports.length ? esc(r.ports.join(", ")) : "all ports"}${
+            r.sides !== "both" ? " · " + esc(r.sides) + " only" : ""}</span>
+          <span class="acts">
+            <button class="btn gen" data-i="${i}" title="show this rule's CiliumNetworkPolicy YAML">generate</button>
+            <button class="btn rm" data-i="${i}" title="remove this rule">remove</button>
+          </span></div>`).join("")
+      || '<span class="wif-note">no rules yet — draft an allow or stage a removal on the left; the map below shows the effect</span>';
     const m = $("#wf-metrics");
     if (wifBusy) m.innerHTML = '<span class="wif-m">simulating… (cilium engine)</span>';
     else if (wifErrText) m.innerHTML = `<span class="wif-m bad">${esc(wifErrText)}</span>`;
@@ -1605,12 +1727,15 @@ const DATA = __PORTOLAN_DATA__;
       const r = wifSim.result;
       const heals = (r.added || []).filter(a => a.healsHalfOpen).length;
       const fixes = (r.fixesDrops || []).reduce((n, f) => n + f.n, 0);
+      const breaksN = (r.breaksFlows || []).reduce((n, f) => n + f.n, 0);
       m.innerHTML =
         `<span class="wif-m ${(r.added || []).length ? "good" : ""}">+${(r.added || []).length} passages</span>` +
+        ((r.removed || []).length || wifDels().length
+          ? `<span class="wif-m ${(r.removed || []).length ? "bad" : ""}">−${(r.removed || []).length} passages</span>` : "") +
         (heals ? `<span class="wif-m good">heals ${heals} half-open</span>` : "") +
         (fixes ? `<span class="wif-m good">fixes ${fixes} observed drops</span>` : "") +
         `<span class="wif-m ${(r.halfOpenIntroduced || []).length ? "bad" : ""}">${(r.halfOpenIntroduced || []).length} half-open introduced</span>` +
-        ((r.breaksFlows || []).length ? `<span class="wif-m bad">breaks ${r.breaksFlows.length} live flows</span>` : "") +
+        (breaksN ? `<span class="wif-m bad">breaks live traffic ×${breaksN}</span>` : "") +
         `<span class="wif-m">${(r.probes || 0).toLocaleString()} verdicts</span>`;
     } else m.innerHTML = "";
   }
@@ -1619,7 +1744,7 @@ const DATA = __PORTOLAN_DATA__;
   // builder the simulation uses. One reviewable change at a time.
   async function wifGenerate(i, btn){
     const rule = wifRules[i];
-    if (!rule || btn.disabled) return;
+    if (!rule || rule.del || btn.disabled) return;
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = "…";
@@ -1653,7 +1778,7 @@ const DATA = __PORTOLAN_DATA__;
       const resp = await fetch("api/whatif", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rules: wifRules }),
+        body: JSON.stringify({ rules: wifAllows(), deletes: wifDels().map(x => x.del) }),
       });
       if (seq !== wifSeq) return; // superseded by a newer edit
       if (!resp.ok) wifErrText = (await resp.text()).trim().slice(0, 300) || ("simulation failed (" + resp.status + ")");
@@ -1688,21 +1813,48 @@ const DATA = __PORTOLAN_DATA__;
     const ports = $("#wf-ports").value.split(",").map(s => s.trim()).filter(Boolean);
     wifRules.push({ from, to, ports, sides: $("#wf-sides").value, sel: true });
     $("#wf-from").value = ""; $("#wf-to").value = ""; $("#wf-ports").value = "";
-    wifTyping = "";
+    wifTyping.from = wifTyping.to = "";
     wifAssertView();
     renderWifPanel(); wifSimulate();
   }
   $("#wf-add").addEventListener("click", wifAdd);
   [$("#wf-from"), $("#wf-to"), $("#wf-ports")].forEach(el =>
     el.addEventListener("keydown", e => { if (e.key === "Enter") wifAdd(); }));
-  // Typing an endpoint filters the map live, search-style — the grid
-  // becomes the picker for the rule being drafted.
-  [$("#wf-from"), $("#wf-to")].forEach(el =>
-    el.addEventListener("input", () => {
-      wifTyping = el.value.trim().toLowerCase();
+  // Typing an endpoint (or a policy name) filters the map live,
+  // search-style — every non-empty field applies at once, so the grid
+  // shows both ends of the rule being drafted.
+  [["#wf-from", "from"], ["#wf-to", "to"], ["#wf-del", "del"]].forEach(([sel, key]) =>
+    $(sel).addEventListener("input", function(){
+      wifTyping[key] = this.value.trim().toLowerCase();
       redraw();
     }));
+  // Staged removals pick from the policies the map already knows.
+  {
+    const pl = $("#pollist");
+    Object.keys(DATA.policyRules || {}).sort().forEach(k => {
+      const o = document.createElement("option"); o.value = k; pl.appendChild(o);
+    });
+  }
+  function wifAddDel(){
+    const key = $("#wf-del").value.trim();
+    const err = $("#wf-err");
+    if (!key || !(DATA.policyRules || {})[key]){
+      err.textContent = "pick an existing policy — autocomplete lists every one the snapshot knows";
+      return;
+    }
+    if (wifRules.some(r => r.del === key)){ err.textContent = "that removal is already staged"; return; }
+    err.textContent = "";
+    wifRules.push({ del: key, sel: true });
+    $("#wf-del").value = "";
+    wifTyping.del = "";
+    wifAssertView();
+    renderWifPanel(); wifSimulate();
+  }
+  $("#wf-delbtn").addEventListener("click", wifAddDel);
+  $("#wf-del").addEventListener("keydown", e => { if (e.key === "Enter") wifAddDel(); });
   $("#wf-list").addEventListener("click", e => {
+    const vw = e.target.closest(".view");
+    if (vw) { showPolicy(vw.dataset.pol); return; }
     const gen = e.target.closest(".gen");
     if (gen) { wifGenerate(Number(gen.dataset.i), gen); return; }
     const rm = e.target.closest(".rm");
@@ -1807,8 +1959,9 @@ const DATA = __PORTOLAN_DATA__;
     // simulation, and the panel all clear back to a blank slate.
     if (wifOn) { wifOn = false; $("#wifbtn").setAttribute("aria-pressed", "false"); document.body.classList.remove("wif-on"); }
     if (wifRules.length || wifSim) {
-      wifRules = []; wifSim = null; wifErrText = ""; wifTyping = ""; wifSeq++;
-      $("#wf-from").value = ""; $("#wf-to").value = ""; $("#wf-ports").value = ""; $("#wf-err").textContent = "";
+      wifRules = []; wifSim = null; wifErrText = ""; wifSeq++;
+      wifTyping = { from: "", to: "", del: "" };
+      $("#wf-from").value = ""; $("#wf-to").value = ""; $("#wf-ports").value = ""; $("#wf-del").value = ""; $("#wf-err").textContent = "";
       renderWifPanel();
     }
     $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";

@@ -187,11 +187,15 @@ func cmdServe(ctx context.Context, args []string) error {
 	return nil
 }
 
-// whatifRequest is the panel's simulation payload: simplified rules only —
-// never raw manifests. The server derives real CNPs from them, so the
-// input surface stays small and structured.
+// whatifRequest is the panel's simulation payload: simplified rules and
+// policy deletions by provenance key — never raw manifests. The server
+// derives real CNPs from the rules, so the input surface stays small and
+// structured.
 type whatifRequest struct {
 	Rules []whatif.SimpleRule `json:"rules"`
+	// Deletes name existing snapshot policies to remove, in provenance
+	// form: Kind/namespace/name (or Kind/name for cluster-scoped).
+	Deletes []string `json:"deletes"`
 }
 
 type whatifResponse struct {
@@ -210,8 +214,8 @@ func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(req.Rules) == 0 || len(req.Rules) > maxWhatifRules {
-		http.Error(w, fmt.Sprintf("need 1-%d rules", maxWhatifRules), http.StatusBadRequest)
+	if n := len(req.Rules) + len(req.Deletes); n == 0 || n > maxWhatifRules {
+		http.Error(w, fmt.Sprintf("need 1-%d rules/deletes", maxWhatifRules), http.StatusBadRequest)
 		return
 	}
 	s.mu.RLock()
@@ -222,16 +226,26 @@ func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pols, mans, err := whatif.GenerateCNPs(snap, req.Rules)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var pols []snapshot.Policy
+	var mans []whatif.Manifest
+	if len(req.Rules) > 0 {
+		var err error
+		pols, mans, err = whatif.GenerateCNPs(snap, req.Rules)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	s.whatifMu.Lock()
-	res, err := whatif.Compute(snap, whatif.Changes{Apply: pols})
+	res, err := whatif.Compute(snap, whatif.Changes{Apply: pols, Delete: req.Deletes})
 	s.whatifMu.Unlock()
 	if err != nil {
-		http.Error(w, "simulation failed: "+err.Error(), http.StatusInternalServerError)
+		// A delete naming no snapshot policy is the caller's mistake.
+		code := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "no such policy") {
+			code = http.StatusBadRequest
+		}
+		http.Error(w, "simulation failed: "+err.Error(), code)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
