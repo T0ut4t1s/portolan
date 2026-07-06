@@ -33,7 +33,7 @@
     -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
 
   header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 18px;margin-bottom:6px;}
-  h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;}
+  h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;cursor:pointer;}
   h1 b{color:var(--accent)}
   .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
   .stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}
@@ -235,7 +235,7 @@
 </head>
 <body>
 <header>
-  <h1><b>Portolan</b> policy map</h1>
+  <h1 id="logo" title="reset view"><b>Portolan</b> policy map</h1>
   <span class="meta" id="meta"></span>
 </header>
 <div class="stats" id="stats"></div>
@@ -401,12 +401,12 @@ const DATA = __PORTOLAN_DATA__;
   // inventory — click → the map contracts to those edges (with each
   // involved workload's neighborhood for context) and the audit panel
   // opens scrolled to the group. Click again to release.
-  // Zero findings → inert chip: nothing to filter to. Finding chips sit in
-  // their own bordered "findings" group right after the inventory chips,
-  // so the row reads as facts | findings.
-  const findDefs = [[half, "half-open", "", half ? "aud-half" : ""]];
+  // Finding chips stay clickable even at zero — the door to the audit
+  // group shouldn't vanish when the group happens to be empty (drop counts
+  // legitimately hit 0 between collection windows).
+  const findDefs = [[half, "half-open", "", "aud-half"]];
   if (FLOWS) findDefs.push([FLOWS.drops.length, "observed drops",
-    FLOWS.drops.length ? "bad" : "", FLOWS.drops.length ? "aud-drops" : ""]);
+    FLOWS.drops.length ? "bad" : "", "aud-drops"]);
   const chipHTML = ([v,l,cls,goto]) =>
     `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
   $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
@@ -421,7 +421,9 @@ const DATA = __PORTOLAN_DATA__;
       inspectHome(); redraw();
       return;
     }
-    findingFilter = kind; pinned = hovered = focusNS = queryPair = null;
+    pinned = hovered = focusNS = queryPair = null;
+    // Nothing to filter to → just show the (empty) audit group as evidence.
+    findingFilter = findingEdges(kind).length ? kind : null;
     auditMode = true; $("#audit").setAttribute("aria-pressed", "true");
     renderAudit(); redraw();
     document.getElementById(s.dataset.goto)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1161,11 +1163,15 @@ const DATA = __PORTOLAN_DATA__;
     const x = e.target.closest(".ext");
     if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; findingFilter = null; clearSearch(); redraw(); }
   });
-  $("#reset").addEventListener("click", () => {
+  // The logo is the home button: same full reset as the reset control.
+  function resetView(){
     pinned = hovered = focusNS = queryPair = findingFilter = null;
+    if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
     $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
     inspectHome(); redraw();
-  });
+  }
+  $("#reset").addEventListener("click", resetView);
+  $("#logo").addEventListener("click", resetView);
   $("#search").addEventListener("input", function(){
     query = this.value.trim().toLowerCase(); redraw();
   });
