@@ -209,13 +209,15 @@ func TestBroadClusterEntityAllowance(t *testing.T) {
 	}
 	// End-to-end nothing opens (receivers still deny) — but the egress side
 	// flips for every peer, so half-open findings must name qbittorrent.
+	// A port-wildcard allowance flips every probe, which collapses to the
+	// single "all ports" label (the canary proves the wildcard reached it).
 	found := false
 	for _, h := range res.HalfOpen {
 		if h.Src == "media/sonarr" && h.Dst == "qbit/qbittorrent" && h.Side == "egress" {
 			found = true
 			for _, p := range h.Ports {
-				if p == "other ports" {
-					return // canary present: allowance is port-wildcard, entity resolved
+				if p == "all ports" || p == "other ports" {
+					return // wildcard detected: entity resolved, canary flipped
 				}
 			}
 		}
@@ -224,6 +226,28 @@ func TestBroadClusterEntityAllowance(t *testing.T) {
 		t.Fatalf("broad cluster egress not detected: halfOpen=%+v added=%+v", res.HalfOpen, res.Added)
 	}
 	t.Fatalf("canary port missing from broad allowance: %+v", res.HalfOpen)
+}
+
+// An all-ports allow must read as "all ports", not as an inventory of
+// every port any policy in the cluster happens to name.
+func TestAllPortsCollapse(t *testing.T) {
+	snap := testSnap()
+	pols, _, err := GenerateCNPs(snap, []SimpleRule{
+		{From: "media/sonarr", To: "qbit/qbittorrent"}, // no ports = allow all
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Compute(snap, Changes{Apply: pols})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Added) != 1 {
+		t.Fatalf("added = %+v", res.Added)
+	}
+	if len(res.Added[0].Ports) != 1 || res.Added[0].Ports[0] != "all ports" {
+		t.Errorf("ports = %v, want the collapsed [all ports]", res.Added[0].Ports)
+	}
 }
 
 func TestParseDrafts(t *testing.T) {

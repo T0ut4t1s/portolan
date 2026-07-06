@@ -181,16 +181,26 @@ func Compute(snap *snapshot.Snapshot, ch Changes) (*Result, error) {
 		}
 	}
 
+	// A delta that flipped on EVERY probe — all named ports plus both
+	// "any other port" canaries — is an all-ports change; listing dozens
+	// of port labels would bury that fact instead of stating it.
+	collapse := func(ports []string) []string {
+		ports = sortPorts(ports)
+		if len(ports) == len(probes) {
+			return []string{"all ports"}
+		}
+		return ports
+	}
 	for _, d := range added {
-		d.Ports = sortPorts(d.Ports)
+		d.Ports = collapse(d.Ports)
 		res.Added = append(res.Added, *d)
 	}
 	for _, d := range removed {
-		d.Ports = sortPorts(d.Ports)
+		d.Ports = collapse(d.Ports)
 		res.Removed = append(res.Removed, *d)
 	}
 	for _, h := range halfOpen {
-		h.Ports = sortPorts(h.Ports)
+		h.Ports = collapse(h.Ports)
 		res.HalfOpen = append(res.HalfOpen, *h)
 	}
 	sortDeltas(res.Added)
