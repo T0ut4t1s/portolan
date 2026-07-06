@@ -32,7 +32,8 @@
   body{background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.5;
     -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
 
-  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 18px;margin-bottom:6px;}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-bottom:6px;}
+  header #theme{margin-left:auto;}
   h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;cursor:pointer;}
   h1 b{color:var(--accent)}
   .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
@@ -127,8 +128,15 @@
     border-radius:12px;padding:9px 10px 6px;margin-left:8px;}
   .findlabel{position:absolute;top:-7px;left:10px;background:var(--bg);padding:0 6px;
     font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
-    color:var(--muted);line-height:1;}
+    color:var(--muted);line-height:1;white-space:nowrap;}
   .findgroup .stat{box-shadow:none;}
+  /* Bordered control groups: switches and the passage-check cluster read
+     as units, labeled on the border line like the findings group. */
+  .ctlgroup{position:relative;display:flex;align-items:center;gap:6px;
+    border:1px solid var(--line-2);border-radius:12px;padding:10px 10px 8px;}
+  /* Reset promoted to the stats row, far right — the escape hatch should
+     be easy to find when the lines get overwhelming. */
+  .stat-reset{margin-left:auto;align-self:center;font-size:.88rem;padding:9px 18px;}
 
   .rail{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
   .ext{font-family:var(--mono);font-size:.72rem;background:var(--world-soft);color:var(--ink-2);
@@ -237,22 +245,25 @@
 <header>
   <h1 id="logo" title="reset view"><b>Portolan</b> policy map</h1>
   <span class="meta" id="meta"></span>
+  <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
 </header>
 <div class="stats" id="stats"></div>
 <div class="warnbar" id="warnbar" hidden></div>
 <div class="controls">
   <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
-  <span class="pq">
-    <input class="search pq-in" id="qa" list="nodelist" placeholder="passage: from…" aria-label="Passage source">
+  <span class="pq ctlgroup">
+    <span class="findlabel">passage check</span>
+    <input class="search pq-in" id="qa" list="nodelist" placeholder="from…" aria-label="Passage source">
     <span class="pq-arrow">→</span>
     <input class="search pq-in" id="qb" list="nodelist" placeholder="to…" aria-label="Passage destination">
     <button class="btn" id="qgo">check</button>
   </span>
   <datalist id="nodelist"></datalist>
-  <button class="btn" id="audit" aria-pressed="false">audit</button>
-  <button class="btn" id="deadbtn" aria-pressed="false" hidden title="show selector references matching no live workload as phantom nodes">unmatched</button>
-  <button class="btn" id="reset">reset</button>
-  <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
+  <span class="ctlgroup">
+    <span class="findlabel">toggles</span>
+    <button class="btn" id="audit" aria-pressed="false">audit</button>
+    <button class="btn" id="deadbtn" aria-pressed="false" hidden title="show selector references matching no live workload as phantom nodes">unmatched</button>
+  </span>
   <span class="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
@@ -410,7 +421,8 @@ const DATA = __PORTOLAN_DATA__;
   const chipHTML = ([v,l,cls,goto]) =>
     `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
   $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
-    `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>`;
+    `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>` +
+    `<button class="btn stat-reset" id="reset" title="clear all selections and filters">reset</button>`;
   $("#stats").addEventListener("click", e => {
     const s = e.target.closest(".stat[data-goto]");
     if (!s) return;
@@ -1178,7 +1190,9 @@ const DATA = __PORTOLAN_DATA__;
 
   // Click anywhere outside the interactive surfaces → back to the main view.
   document.addEventListener("click", e => {
-    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .stat[data-goto]")) return;
+    // header (theme) and the stats row (finding chips, reset) manage their
+    // own state — a click there must not double as a click-away reset.
+    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .stats, header")) return;
     if (pinned || focusNS || queryPair || auditMode || findingFilter) {
       pinned = focusNS = queryPair = findingFilter = null;
       if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
