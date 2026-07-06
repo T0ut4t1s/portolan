@@ -20,6 +20,7 @@ import (
 	"github.com/T0ut4t1s/portolan/pkg/graph"
 	"github.com/T0ut4t1s/portolan/pkg/render"
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
+	"github.com/T0ut4t1s/portolan/pkg/whatif"
 )
 
 // server holds the latest successful collection results. Collection failures
@@ -31,8 +32,15 @@ type server struct {
 	snapJSON []byte
 	audit    []byte
 	brief    []byte
-	lastOK   time.Time
-	lastErr  string
+	// snap is the latest snapshot object, kept for what-if simulation.
+	// Collections replace it wholesale and never mutate it in place, so a
+	// handler may take the pointer under RLock and compute without the lock.
+	snap    *snapshot.Snapshot
+	lastOK  time.Time
+	lastErr string
+	// whatifMu serializes simulations: each one is a multi-second
+	// full-CPU sweep, and piling them up helps nobody.
+	whatifMu sync.Mutex
 }
 
 func cmdServe(ctx context.Context, args []string) error {
@@ -94,6 +102,7 @@ func cmdServe(ctx context.Context, args []string) error {
 		s.snapJSON = snapJSON
 		s.audit = auditJSON
 		s.brief = graph.Brief(g, a)
+		s.snap = snap
 		s.lastOK = time.Now().UTC()
 		s.lastErr = ""
 		s.mu.Unlock()
@@ -162,6 +171,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	if *dataDir != "" {
 		mux.HandleFunc("GET /snapshots/", historyHandler(*dataDir))
 	}
+	mux.HandleFunc("POST /api/whatif", s.whatifHandler)
 
 	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -175,6 +185,57 @@ func cmdServe(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// whatifRequest is the panel's simulation payload: simplified rules only —
+// never raw manifests. The server derives real CNPs from them, so the
+// input surface stays small and structured.
+type whatifRequest struct {
+	Rules []whatif.SimpleRule `json:"rules"`
+}
+
+type whatifResponse struct {
+	Result *whatif.Result `json:"result"`
+	// Manifests are the CNPs that were simulated — identical objects, so
+	// what the generate button shows is exactly what the verdicts cover.
+	Manifests []whatif.Manifest `json:"manifests"`
+}
+
+const maxWhatifRules = 20
+
+func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
+	var req whatifRequest
+	body := http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.Rules) == 0 || len(req.Rules) > maxWhatifRules {
+		http.Error(w, fmt.Sprintf("need 1-%d rules", maxWhatifRules), http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	snap := s.snap
+	s.mu.RUnlock()
+	if snap == nil {
+		http.Error(w, "no successful collection yet", http.StatusServiceUnavailable)
+		return
+	}
+
+	pols, mans, err := whatif.GenerateCNPs(snap, req.Rules)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.whatifMu.Lock()
+	res, err := whatif.Compute(snap, whatif.Changes{Apply: pols})
+	s.whatifMu.Unlock()
+	if err != nil {
+		http.Error(w, "simulation failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(whatifResponse{Result: res, Manifests: mans})
 }
 
 // historyHandler lists and serves the snapshot archive.

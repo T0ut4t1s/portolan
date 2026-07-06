@@ -75,6 +75,15 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   **delta map**: the diff rendered visually — green passages the draft
   opens, red ones it closes, half-open and broken-live-flow badges — in
   the map's visual language, as a single self-contained file.
+- **What-if panel (dashboard)** — in serve mode the map gains an
+  interactive what-if: draft simplified allow rules (from, to, ports,
+  sides) against live autocomplete, and the server simulates them with
+  the Cilium engine on the latest snapshot. Projected passages march
+  green over the current view, one-sided rules flag the half-open they'd
+  introduce, and per-rule **generate** hands you the exact
+  CiliumNetworkPolicy YAML that was simulated — one builder feeds both,
+  so the preview cannot drift from the output. Projections persist as an
+  overlay while you explore; the stats-row chip counts them.
 
 ## What it deliberately does not do
 
@@ -139,6 +148,7 @@ portolan serve --interval 15m --data /data
 #   GET /              the map        GET /audit.json     findings
 #   GET /brief.md      LLM handoff    GET /snapshots/     history archive
 #   GET /healthz       liveness       GET /snapshot.json  latest capture
+#   POST /api/whatif   simulate simplified allow rules (the map's panel)
 ```
 
 ## Status
