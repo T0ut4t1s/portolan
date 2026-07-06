@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Portolan — policy map</title>
+<title>Portolan — network policy map</title>
 <style>
   :root{
     --bg:#e9ebf3; --stage:#f3f4fa; --surface:#ffffff; --surface-2:#f7f8fc;
@@ -34,6 +34,9 @@
 
   header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-bottom:6px;}
   header #theme{margin-left:auto;}
+  .titleblock{display:flex;flex-direction:column;gap:3px;}
+  .meta b{color:var(--ink-2);font-weight:600;}
+  .meta .stale{color:var(--world);font-weight:700;}
   h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;cursor:pointer;}
   h1 b{color:var(--accent)}
   .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
@@ -254,8 +257,10 @@
 </head>
 <body>
 <header>
-  <h1 id="logo" title="reset view"><b>Portolan</b> policy map</h1>
-  <span class="meta" id="meta"></span>
+  <div class="titleblock">
+    <h1 id="logo" title="reset view"><b>Portolan</b> network policy map</h1>
+    <p class="meta" id="meta"></p>
+  </div>
   <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
 </header>
 <div class="stats" id="stats"></div>
@@ -391,6 +396,8 @@ const DATA = __PORTOLAN_DATA__;
   const obsFor = (s, d) => obsByKey.get(s + "|" + d);
   const fmtDur = ms => {
     const s = Math.max(0, Math.round(ms / 1000));
+    if (s >= 86400) { const h = Math.floor(s % 86400 / 3600); return Math.floor(s / 86400) + "d" + (h ? h + "h" : ""); }
+    if (s >= 3600) { const m = Math.floor(s % 3600 / 60); return Math.floor(s / 3600) + "h" + (m ? m + "m" : ""); }
     return s >= 60 ? Math.floor(s / 60) + "m" + (s % 60 ? s % 60 + "s" : "") : s + "s";
   };
 
@@ -410,14 +417,24 @@ const DATA = __PORTOLAN_DATA__;
   DATA.namespaces.forEach(n => { if (n.policyCount > 0 || n.workloads.length > 0 && activeNS.has(n.name)) activeNS.add(n.name); });
 
   // ---------- header ----------
-  let metaText = (DATA.cluster ? DATA.cluster + " · " : "") + DATA.takenAt;
-  if (FLOWS) {
-    // Coverage honesty: Hubble's ring buffer may hold far less than the
-    // requested window — say how much of it traffic was actually seen over.
-    const held = FLOWS.oldestFlow ? fmtDur(new Date(FLOWS.to) - new Date(FLOWS.oldestFlow)) : null;
-    metaText += " · flows " + FLOWS.window + (held ? " (buffer held " + held + ")" : "");
+  // Provenance subtitle: labeled values one step below the title, with a
+  // staleness signal — a dashboard quietly serving old data is the worst
+  // failure mode, so the capture time turns amber past 3 collection cycles.
+  {
+    const parts = [];
+    if (DATA.cluster) parts.push("cluster <b>" + esc(DATA.cluster) + "</b>");
+    const age = Date.now() - new Date(DATA.takenAt.replace(" UTC", "Z").replace(" ", "T"));
+    const stale = isFinite(age) && age > 45 * 60 * 1000;
+    parts.push("captured <b>" + esc(DATA.takenAt) + "</b>" +
+      (stale ? ' <span class="stale">— stale (' + fmtDur(age) + ' old)</span>' : ""));
+    if (FLOWS) {
+      // Coverage honesty: Hubble's ring buffer may hold far less than the
+      // requested window — say how much of it traffic was actually seen over.
+      const held = FLOWS.oldestFlow ? fmtDur(new Date(FLOWS.to) - new Date(FLOWS.oldestFlow)) : null;
+      parts.push("flows <b>" + esc(FLOWS.window) + "</b>" + (held ? " (buffer held " + held + ")" : ""));
+    }
+    $("#meta").innerHTML = parts.join(" · ");
   }
-  $("#meta").textContent = metaText;
   $("#tool").textContent = DATA.tool;
   const half = DATA.edges.filter(halfOpen).length;
   const statDefs = [
