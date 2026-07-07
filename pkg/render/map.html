@@ -811,6 +811,18 @@ const DATA = __PORTOLAN_DATA__;
     if (v) v.removed.forEach(d => { ids.add(d.s); ids.add(d.d); });
     return ids;
   }
+  // wifScopeAll: the nodes EVERY staged rule involves, ticked or not —
+  // the content filter while the panel is open. Checkboxes choose which
+  // connections project; they never move the board underneath. Until the
+  // simulation lands, the rules' own endpoints stand in for its deltas.
+  function wifScopeAll(){
+    const ids = new Set();
+    wifRules.forEach(r => { if (!r.del) { ids.add(r.from); ids.add(r.to); } });
+    const res = wifSim && wifSim.result;
+    if (res) [...(res.added || []), ...(res.halfOpenIntroduced || []), ...(res.removed || [])]
+      .forEach(d => { ids.add(d.s); ids.add(d.d); });
+    return ids;
+  }
 
   // findingEdges: the edge set behind a finding chip — the map filters to
   // exactly these when the chip is active. "audit" is the union: every
@@ -1099,13 +1111,14 @@ const DATA = __PORTOLAN_DATA__;
       });
       if (contract.size === 0) contract = null; // empty finding set: don't blank the grid
     }
-    else if (wifOn && wifProjecting() && !wifTypingActive()) {
-      // While the panel is open, the ticked rows drive the content: the
-      // grid contracts to the union of the selected scenarios — each
-      // involved node plus its full neighborhood. Untick/tick and the
-      // view follows; close the panel and this contraction lifts.
+    else if (wifOn && wifRules.length && !wifTypingActive()) {
+      // While the panel is open, ALL staged rules drive the content: the
+      // grid contracts to the union of every rule's scenario — each
+      // involved node plus its full neighborhood. Ticking and unticking
+      // never moves the board, only the projected connections; close the
+      // panel and this contraction lifts.
       contract = new Set();
-      wifScopeIds().forEach(id => {
+      wifScopeAll().forEach(id => {
         const ns = homeNS(id);
         if (!ns) return;
         contract.add(ns);
@@ -1157,8 +1170,8 @@ const DATA = __PORTOLAN_DATA__;
       findingEdges(findingFilter).forEach(e => { ids.add(e.s); ids.add(e.d); });
       extKeep = keepFrom([...ids]);
     }
-    else if (wifOn && wifProjecting() && !wifTypingActive()) {
-      extKeep = keepFrom([...wifScopeIds()]);
+    else if (wifOn && wifRules.length && !wifTypingActive()) {
+      extKeep = keepFrom([...wifScopeAll()]);
     }
     else {
       const qs = wifTypingActive()
@@ -1187,7 +1200,7 @@ const DATA = __PORTOLAN_DATA__;
     // selected) is a committed view like a pin or a finding: edges must
     // lift ABOVE the cards (dimming raises #edges to z3) or the scenario
     // draws behind the card placeholders and reads as the overview.
-    const wifView = wifOn && wifProjecting() && !wifTypingActive() &&
+    const wifView = wifOn && wifRules.length && !wifTypingActive() &&
                     !active && !focusNS && !queryPair && !findingFilter;
     // Composer typing previews the matched endpoints as if selected —
     // calm neighborhoods, rings, dimming — once the match set is small
@@ -2011,19 +2024,18 @@ const DATA = __PORTOLAN_DATA__;
     wifAssertView();
     renderWifPanel(); wifSimulate();
   });
-  // Opening the panel changes NOTHING about the current view — filters,
-  // pins, and focus persist so a rule can be drafted in the middle of an
-  // investigation. Closing it keeps the projections; the chip counts them.
+  // Opening the panel always reclaims the content area: whatever was
+  // pinned, focused, or filtered releases. With rules staged the board
+  // contracts to ALL of them; with none it resets to the default view —
+  // one predictable landing either way. Closing keeps the projections
+  // (the chip counts them) and returns the default view.
   $("#wifbtn").addEventListener("click", function(){
     wifOn = !wifOn;
     this.setAttribute("aria-pressed", String(wifOn));
     document.body.classList.toggle("wif-on", wifOn);
     if (wifOn){
-      // Reopening with live projections re-asserts the what-if view —
-      // whatever was pinned in between releases so the scenario shows.
-      // With no projections, the current view is left untouched (a rule
-      // can be drafted mid-investigation).
-      if (wifProjecting()) wifAssertView();
+      wifAssertView();
+      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
       renderWifPanel();
       if (wifRules.length && !wifSim && !wifBusy) wifSimulate();
       wifIdleInspect();
