@@ -47,6 +47,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
 	interval := fs.Duration("interval", 15*time.Minute, "collection interval")
+	collectTimeout := fs.Duration("collect-timeout", 0, "per-collection deadline (0: use the interval) — a blackholed kube-API call can otherwise stall all future collections")
 	dataDir := fs.String("data", "", "directory for snapshot history (empty: no history kept)")
 	keep := fs.Int("keep", 500, "snapshots to retain in the data directory")
 	clusterName := fs.String("cluster-name", "", "cluster label recorded in snapshots")
@@ -71,9 +72,20 @@ func cmdServe(ctx context.Context, args []string) error {
 		}
 	}
 
+	// Each cycle gets its own deadline so one hung List (a blackholed
+	// kube-API endpoint has no transport timeout of its own) can't wedge the
+	// collector forever — it fails this cycle, /healthz goes stale, and the
+	// next tick tries again.
+	cycleTimeout := *collectTimeout
+	if cycleTimeout <= 0 {
+		cycleTimeout = *interval
+	}
+
 	s := &server{}
 	collect := func() {
-		snap, err := col.Collect(ctx, snapshot.FlowOptions{Server: *hubbleServer, Window: *flowWindow})
+		cctx, cancel := context.WithTimeout(ctx, cycleTimeout)
+		defer cancel()
+		snap, err := col.Collect(cctx, snapshot.FlowOptions{Server: *hubbleServer, Window: *flowWindow})
 		if err != nil {
 			s.mu.Lock()
 			s.lastErr = err.Error()
@@ -126,8 +138,12 @@ func cmdServe(ctx context.Context, args []string) error {
 		}
 	}
 
-	collect()
+	// The listener comes up first (below); the first collection runs inside
+	// this goroutine. Otherwise probes hit a refused connection during the
+	// initial collect — exactly while the kube-API may be degraded — and the
+	// orchestrator restart-loops the pod instead of waiting.
 	go func() {
+		collect()
 		t := time.NewTicker(*interval)
 		defer t.Stop()
 		for {
@@ -164,6 +180,14 @@ func cmdServe(ctx context.Context, args []string) error {
 		defer s.mu.RUnlock()
 		if s.lastOK.IsZero() {
 			http.Error(w, "no successful collection yet: "+s.lastErr, http.StatusServiceUnavailable)
+			return
+		}
+		// Serving indefinitely-old data is the worst failure mode: fail the
+		// probe once collections have gone quiet for several cycles so a
+		// liveness check restarts the pod instead of trusting stale topology.
+		if age := time.Since(s.lastOK); age > stalenessCycles*(*interval) {
+			http.Error(w, fmt.Sprintf("stale: last good collection %s ago (> %d cycles); last error: %s",
+				age.Round(time.Second), stalenessCycles, s.lastErr), http.StatusServiceUnavailable)
 			return
 		}
 		fmt.Fprintf(w, "ok — last collection %s\n", s.lastOK.Format(time.RFC3339))
@@ -207,6 +231,10 @@ type whatifResponse struct {
 
 const maxWhatifRules = 20
 
+// stalenessCycles is how many collection intervals may elapse without a fresh
+// success before /healthz fails — matches the map's own "stale" threshold.
+const stalenessCycles = 3
+
 func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 	var req whatifRequest
 	body := http.MaxBytesReader(w, r.Body, 64<<10)
@@ -240,9 +268,10 @@ func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 	res, err := whatif.Compute(snap, whatif.Changes{Apply: pols, Delete: req.Deletes})
 	s.whatifMu.Unlock()
 	if err != nil {
-		// A delete naming no snapshot policy is the caller's mistake.
+		// A delete naming no snapshot policy, or a change set that resolves to
+		// nothing, is the caller's mistake, not a server fault.
 		code := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "no such policy") {
+		if errors.Is(err, whatif.ErrNoSuchPolicy) || errors.Is(err, whatif.ErrEmptyChangeSet) {
 			code = http.StatusBadRequest
 		}
 		http.Error(w, "simulation failed: "+err.Error(), code)

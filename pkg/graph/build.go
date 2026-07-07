@@ -133,6 +133,12 @@ type builder struct {
 	phantoms  map[string]*Phantom // unmatched selectors as renderable nodes
 	dropped   map[string]int      // unsupported-construct counters
 	deadRefs  []string            // "policy → selector" refs matching no live workload
+	// denyIngress/denyEgress track default-deny posture per direction and
+	// per namespace. Kept split because a half-open is specifically an
+	// ingress-side gap — conflating it with egress-only deny both misses
+	// real half-opens and invents phantom ones.
+	denyIngress map[string]bool
+	denyEgress  map[string]bool
 }
 
 // phantom records an unmatched selector as a pseudo-node and returns its ID
@@ -154,13 +160,15 @@ func isDead(id string) bool { return strings.HasPrefix(id, "dead:") }
 // Build derives the renderable topology from a snapshot.
 func Build(snap *snapshot.Snapshot) *Graph {
 	b := &builder{
-		snap:      snap,
-		nsLabels:  map[string]map[string]string{},
-		workloads: map[string][]snapshot.Workload{},
-		edges:     map[string]*Edge{},
-		externals: map[string]External{},
-		phantoms:  map[string]*Phantom{},
-		dropped:   map[string]int{},
+		snap:        snap,
+		nsLabels:    map[string]map[string]string{},
+		workloads:   map[string][]snapshot.Workload{},
+		edges:       map[string]*Edge{},
+		externals:   map[string]External{},
+		phantoms:    map[string]*Phantom{},
+		dropped:     map[string]int{},
+		denyIngress: map[string]bool{},
+		denyEgress:  map[string]bool{},
 	}
 	for _, ns := range snap.Namespaces {
 		b.nsLabels[ns.Name] = ns.Labels
@@ -170,7 +178,6 @@ func Build(snap *snapshot.Snapshot) *Graph {
 		b.workloads[wl.Namespace] = append(b.workloads[wl.Namespace], wl)
 	}
 
-	defaultDeny := map[string]bool{}
 	policyCount := map[string]int{}
 
 	for _, pol := range snap.Policies {
@@ -182,22 +189,48 @@ func Build(snap *snapshot.Snapshot) *Graph {
 		switch pol.Kind {
 		case snapshot.KindCNP, snapshot.KindCCNP:
 			for _, raw := range pol.Rules {
-				b.ciliumRule(raw, pol, prov, defaultDeny)
+				b.ciliumRule(raw, pol, prov)
 			}
 		case snapshot.KindNetPol:
 			for _, raw := range pol.Rules {
-				b.netpolRule(raw, pol, prov, defaultDeny)
+				b.netpolRule(raw, pol, prov)
 			}
 		default:
 			b.dropped[fmt.Sprintf("unsupported policy kind %s", pol.Kind)]++
 		}
 	}
 
-	return b.assemble(defaultDeny, policyCount)
+	return b.assemble(policyCount)
+}
+
+// markDeny records default-deny for a direction on a namespace scope. For a
+// CNP the scope is the policy's own namespace; for a CCNP it is every
+// namespace whose workloads the all-endpoints subject selected.
+func (b *builder) markDeny(polNS string, subjects []string, ing, eg bool) {
+	if !ing && !eg {
+		return
+	}
+	mark := func(ns string) {
+		if ing {
+			b.denyIngress[ns] = true
+		}
+		if eg {
+			b.denyEgress[ns] = true
+		}
+	}
+	if polNS != "" {
+		mark(polNS)
+		return
+	}
+	for _, s := range subjects {
+		if ns, ok := nodeNS(s); ok {
+			mark(ns)
+		}
+	}
 }
 
 // ciliumRule handles one CNP/CCNP rule payload.
-func (b *builder) ciliumRule(raw json.RawMessage, pol snapshot.Policy, prov string, defaultDeny map[string]bool) {
+func (b *builder) ciliumRule(raw json.RawMessage, pol snapshot.Policy, prov string) {
 	var rule ciliumRule
 	if err := json.Unmarshal(raw, &rule); err != nil {
 		b.dropped["unparseable Cilium rule"]++
@@ -220,22 +253,28 @@ func (b *builder) ciliumRule(raw json.RawMessage, pol snapshot.Policy, prov stri
 	}
 	subjects := b.match(sel, defaultNS, prov)
 
-	// Default-deny detection: an all-endpoints selector combined with
-	// either explicit enableDefaultDeny or a rule-free body. For CCNPs the
-	// flag lands on every namespace with matched subjects.
-	explicitDeny := rule.EnableDefaultDeny != nil &&
-		((rule.EnableDefaultDeny.Ingress != nil && *rule.EnableDefaultDeny.Ingress) ||
-			(rule.EnableDefaultDeny.Egress != nil && *rule.EnableDefaultDeny.Egress))
-	if emptySel(sel) && (explicitDeny || (len(rule.Ingress) == 0 && len(rule.Egress) == 0)) {
-		if pol.Namespace != "" {
-			defaultDeny[pol.Namespace] = true
-		} else {
-			for _, s := range subjects {
-				if ns, ok := nodeNS(s); ok {
-					defaultDeny[ns] = true
-				}
+	// Default-deny detection, per direction. An all-endpoints selector puts
+	// every endpoint in scope into default-deny for a direction when that
+	// direction carries any section — allow or deny, including the sentinel
+	// "allow only this impossible label" arm the deny idiom uses (the arm
+	// matches nothing, so the section still means "deny all inbound"). A
+	// rule-free body with no explicit flags denies both directions.
+	// enableDefaultDeny, when present, is authoritative for its direction.
+	if emptySel(sel) {
+		edd := rule.EnableDefaultDeny
+		denyIng := len(rule.Ingress) > 0 || len(rule.IngressDeny) > 0
+		denyEg := len(rule.Egress) > 0 || len(rule.EgressDeny) > 0
+		if edd != nil {
+			if edd.Ingress != nil {
+				denyIng = *edd.Ingress
 			}
+			if edd.Egress != nil {
+				denyEg = *edd.Egress
+			}
+		} else if !denyIng && !denyEg {
+			denyIng, denyEg = true, true // rule-free selects all with an empty allowlist
 		}
+		b.markDeny(pol.Namespace, subjects, denyIng, denyEg)
 	}
 
 	for _, ing := range rule.Ingress {
@@ -309,7 +348,7 @@ func (b *builder) ciliumRule(raw json.RawMessage, pol snapshot.Policy, prov stri
 }
 
 // netpolRule handles one native NetworkPolicy spec.
-func (b *builder) netpolRule(raw json.RawMessage, pol snapshot.Policy, prov string, defaultDeny map[string]bool) {
+func (b *builder) netpolRule(raw json.RawMessage, pol snapshot.Policy, prov string) {
 	var spec netpolSpec
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		b.dropped["unparseable NetworkPolicy spec"]++
@@ -317,14 +356,18 @@ func (b *builder) netpolRule(raw json.RawMessage, pol snapshot.Policy, prov stri
 	}
 	subjects := b.match(spec.PodSelector, pol.Namespace, prov)
 
+	// k8s default policyTypes: Ingress is always implied; Egress only when
+	// the spec carries egress rules.
 	hasType := func(t string) bool {
 		if len(spec.PolicyTypes) == 0 {
-			return t == "Ingress" // k8s default when types are unset
+			return t == "Ingress" || (t == "Egress" && len(spec.Egress) > 0)
 		}
 		return slices.Contains(spec.PolicyTypes, t)
 	}
-	if emptySel(spec.PodSelector) && hasType("Ingress") && len(spec.Ingress) == 0 {
-		defaultDeny[pol.Namespace] = true
+	// An all-pods NetworkPolicy imposes default-deny for each direction it
+	// governs — allow rules poke holes in the deny, they do not lift it.
+	if emptySel(spec.PodSelector) {
+		b.markDeny(pol.Namespace, subjects, hasType("Ingress"), hasType("Egress"))
 	}
 
 	for _, ing := range spec.Ingress {
@@ -398,17 +441,23 @@ func (b *builder) match(sel labelSel, defaultNS, prov string) []string {
 	if _, ok := sel.MatchLabels[sentinelDenyKey]; ok {
 		return nil
 	}
-	podSel, nsExact, nsLabels := splitSelector(sel)
+	podSel, nsName, nsLabels := splitSelector(sel)
+	hasNsName := len(nsName.MatchLabels) > 0 || len(nsName.MatchExpressions) > 0
+	hasNsLabels := len(nsLabels.MatchLabels) > 0 || len(nsLabels.MatchExpressions) > 0
 
 	var namespaces []string
 	switch {
-	case len(nsExact) > 0:
-		namespaces = nsExact
-	case len(nsLabels.MatchLabels) > 0 || len(nsLabels.MatchExpressions) > 0:
+	case hasNsName || hasNsLabels:
+		// Namespace-name and namespace-label constraints AND together (k8s
+		// intersects them), each evaluated with full operator semantics.
 		for _, ns := range b.nsNames {
-			if matchLabels(nsLabels, b.nsLabels[ns]) {
-				namespaces = append(namespaces, ns)
+			if hasNsName && !matchLabels(nsName, map[string]string{nsKey: ns}) {
+				continue
 			}
+			if hasNsLabels && !matchLabels(nsLabels, b.nsLabels[ns]) {
+				continue
+			}
+			namespaces = append(namespaces, ns)
 		}
 	case defaultNS != "":
 		namespaces = []string{defaultNS}
@@ -455,15 +504,22 @@ func selSummary(sel labelSel) string {
 	return strings.Join(parts, ", ")
 }
 
-// splitSelector separates namespace scoping from pod-label matching.
-func splitSelector(sel labelSel) (podSel labelSel, nsExact []string, nsLabels labelSel) {
+// splitSelector separates a Cilium selector into three matchers evaluated
+// against different subjects: pod labels, the namespace *name* (the reserved
+// io.kubernetes.pod.namespace key, ALL operators), and namespace *labels*
+// (io.cilium.k8s.namespace.labels.*). Routing the name matcher through a
+// synthetic {nsKey: name} map lets matchLabels() apply In/NotIn/Exists/
+// DoesNotExist with correct semantics, and keeps matchLabels equality and
+// matchExpressions on the same key ANDed the way k8s intersects them.
+func splitSelector(sel labelSel) (podSel, nsName, nsLabels labelSel) {
 	podSel.MatchLabels = map[string]string{}
+	nsName.MatchLabels = map[string]string{}
 	nsLabels.MatchLabels = map[string]string{}
 	for k, v := range sel.MatchLabels {
 		key := stripPrefix(k)
 		switch {
 		case key == nsKey:
-			nsExact = append(nsExact, v)
+			nsName.MatchLabels[nsKey] = v
 		case strings.HasPrefix(key, nsLabelsKey):
 			nsLabels.MatchLabels[strings.TrimPrefix(key, nsLabelsKey)] = v
 		default:
@@ -473,8 +529,9 @@ func splitSelector(sel labelSel) (podSel labelSel, nsExact []string, nsLabels la
 	for _, e := range sel.MatchExpressions {
 		key := stripPrefix(e.Key)
 		switch {
-		case key == nsKey && e.Operator == "In":
-			nsExact = append(nsExact, e.Values...)
+		case key == nsKey:
+			e.Key = nsKey
+			nsName.MatchExpressions = append(nsName.MatchExpressions, e)
 		case strings.HasPrefix(key, nsLabelsKey):
 			e.Key = strings.TrimPrefix(key, nsLabelsKey)
 			nsLabels.MatchExpressions = append(nsLabels.MatchExpressions, e)
@@ -483,8 +540,7 @@ func splitSelector(sel labelSel) (podSel labelSel, nsExact []string, nsLabels la
 			podSel.MatchExpressions = append(podSel.MatchExpressions, e)
 		}
 	}
-	sort.Strings(nsExact)
-	return podSel, slices.Compact(nsExact), nsLabels
+	return podSel, nsName, nsLabels
 }
 
 func stripPrefix(key string) string {
@@ -616,7 +672,7 @@ func cidrs(set []cidrRule) []string {
 
 // ---- assembly ----------------------------------------------------------------
 
-func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]int) *Graph {
+func (b *builder) assemble(policyCount map[string]int) *Graph {
 	g := &Graph{
 		Cluster:     b.snap.Cluster,
 		TakenAt:     b.snap.TakenAt.Format("2006-01-02 15:04 UTC"),
@@ -633,10 +689,12 @@ func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]i
 
 	for _, ns := range b.snap.Namespaces {
 		n := Namespace{
-			Name:        ns.Name,
-			DefaultDeny: defaultDeny[ns.Name],
-			PolicyCount: policyCount[ns.Name],
-			Workloads:   make([]Workload, 0, len(b.workloads[ns.Name])),
+			Name:               ns.Name,
+			DefaultDeny:        b.denyIngress[ns.Name] || b.denyEgress[ns.Name],
+			DefaultDenyIngress: b.denyIngress[ns.Name],
+			DefaultDenyEgress:  b.denyEgress[ns.Name],
+			PolicyCount:        policyCount[ns.Name],
+			Workloads:          make([]Workload, 0, len(b.workloads[ns.Name])),
 		}
 		for _, wl := range b.workloads[ns.Name] {
 			n.Workloads = append(n.Workloads, Workload{
@@ -661,30 +719,38 @@ func (b *builder) assemble(defaultDeny map[string]bool, policyCount map[string]i
 	// allowance is covered, not half-open. This keeps the half-open signal
 	// pointing at genuine gaps (visualization-grade; whatif gives verdicts).
 	broadEgress, broadIngress := map[string]bool{}, map[string]bool{}
+	broadEgProv, broadInProv := map[string][]string{}, map[string][]string{}
 	for _, e := range b.edges {
-		if !isBroad(e.Dst) && !isBroad(e.Src) {
-			continue
-		}
 		if e.DeclaredEgress && isBroad(e.Dst) {
 			broadEgress[e.Src] = true
+			broadEgProv[e.Src] = append(broadEgProv[e.Src], e.Policies...)
 		}
 		if e.DeclaredIngress && isBroad(e.Src) {
 			broadIngress[e.Dst] = true
+			broadInProv[e.Dst] = append(broadInProv[e.Dst], e.Policies...)
 		}
 	}
 
 	for _, e := range b.edges {
 		slices.Sort(e.Ports)
 		e.Ports = slices.Compact(e.Ports)
-		slices.Sort(e.Policies)
-		e.Policies = slices.Compact(e.Policies)
 		e.Cross = crossNS(e.Src, e.Dst)
+		// Credit a silent side to the broad allowance that covers it, and
+		// attribute the enabling policy so the client's footprint counts this
+		// passage against it — otherwise the edge lists only the peer's own
+		// policy and a broad "reach the whole cluster" CNP looks far smaller
+		// than its true blast radius. BroadEgress/BroadIngress still mark the
+		// side as covered-by-breadth rather than declared per pair.
 		if !e.DeclaredEgress && broadEgress[e.Src] {
 			e.DeclaredEgress, e.BroadEgress = true, true
+			e.Policies = append(e.Policies, broadEgProv[e.Src]...)
 		}
 		if !e.DeclaredIngress && broadIngress[e.Dst] {
 			e.DeclaredIngress, e.BroadIngress = true, true
+			e.Policies = append(e.Policies, broadInProv[e.Dst]...)
 		}
+		slices.Sort(e.Policies)
+		e.Policies = slices.Compact(e.Policies)
 		g.Edges = append(g.Edges, *e)
 	}
 	slices.SortFunc(g.Edges, func(a, b Edge) int {

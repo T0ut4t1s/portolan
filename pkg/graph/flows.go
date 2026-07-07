@@ -32,10 +32,15 @@ type FlowOverlay struct {
 	Observed []ObservedEdge `json:"observed"`
 	// Drops are denied flows; each is alert-grade.
 	Drops []DropEdge `json:"drops"`
-	// NotShown counts observed edges skipped because an endpoint is not a
-	// node on this map (a pod that died before the snapshot, an
+	// NotShown counts observed FORWARDED edges skipped because an endpoint is
+	// not a node on this map (a pod that died before the snapshot, an
 	// unresolvable peer, or a self-edge).
 	NotShown int `json:"notShown,omitempty"`
+	// NotShownDrops counts DROPPED flows skipped for the same reason. Kept
+	// apart from NotShown because a hidden drop is a denial we are failing to
+	// show — often from exactly the crashed or scaled-to-zero pod worth
+	// seeing — and the map surfaces the count so it is never silent.
+	NotShownDrops int `json:"notShownDrops,omitempty"`
 }
 
 // ObservedEdge is forwarded traffic between two map nodes.
@@ -123,7 +128,11 @@ func attachFlows(g *Graph, fc *snapshot.FlowCapture) {
 		src, okS := resolve(fe.Src)
 		dst, okD := resolve(fe.Dst)
 		if !okS || !okD || src == dst {
-			ov.NotShown++
+			if fe.Verdict == "DROPPED" {
+				ov.NotShownDrops++
+			} else {
+				ov.NotShown++
+			}
 			continue
 		}
 		switch fe.Verdict {

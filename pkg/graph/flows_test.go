@@ -91,6 +91,32 @@ func TestAttachFlows(t *testing.T) {
 	}
 }
 
+// GR-5: a DROPPED flow whose endpoint vanished from the map must not be
+// folded into the benign NotShown (forwarded) count — it goes to
+// NotShownDrops so the honesty bar can surface the hidden denial.
+func TestDroppedFlowFromVanishedPodCountedSeparately(t *testing.T) {
+	snap := testSnap()
+	wl := func(ns, name string) snapshot.FlowPeer {
+		return snapshot.FlowPeer{Namespace: ns, Name: name, Kind: "Deployment"}
+	}
+	snap.Flows = &snapshot.FlowCapture{
+		Status: "ok", Window: "15m",
+		Edges: []snapshot.FlowEdge{
+			// A forwarded flow from a vanished pod: benign, NotShown.
+			{Src: wl("media", "gone-fwd"), Dst: wl("qbit", "qbittorrent"), Port: "8080/TCP", Verdict: "FORWARDED", Count: 1},
+			// A dropped flow from a vanished pod: the interesting one.
+			{Src: wl("media", "gone-drop"), Dst: wl("qbit", "qbittorrent"), Port: "8080/TCP", Verdict: "DROPPED", DropReason: "POLICY_DENIED", Count: 3},
+		},
+	}
+	g := Build(snap)
+	if g.Flows.NotShown != 1 {
+		t.Errorf("NotShown = %d, want 1 (the forwarded one)", g.Flows.NotShown)
+	}
+	if g.Flows.NotShownDrops != 1 {
+		t.Errorf("NotShownDrops = %d, want 1 (the dropped one)", g.Flows.NotShownDrops)
+	}
+}
+
 func TestAttachFlowsDegraded(t *testing.T) {
 	snap := testSnap()
 	snap.Flows = &snapshot.FlowCapture{Status: "error", Reason: "relay unreachable", Window: "15m"}

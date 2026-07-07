@@ -4,8 +4,11 @@
 package whatif
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/T0ut4t1s/portolan/pkg/snapshot"
 )
 
 // The whole point of GenerateCNPs: the objects it emits must round-trip
@@ -146,9 +149,54 @@ func TestSimpleRuleValidation(t *testing.T) {
 		{"bad port", []SimpleRule{{From: "media/sonarr", To: "qbit/qbittorrent", Ports: []string{"http"}}}},
 		{"bad sides", []SimpleRule{{From: "media/sonarr", To: "qbit/qbittorrent", Sides: "sideways"}}},
 		{"empty", nil},
+		// BE-5: an entity source with sides=egress produces no policy (entities
+		// carry no egress) — a silent no-op the user should be told about.
+		{"entity egress-only", []SimpleRule{{From: "entity:world", To: "qbit/qbittorrent", Sides: "egress"}}},
+		// symmetric: entity destination with sides=ingress.
+		{"entity ingress-only", []SimpleRule{{From: "media/sonarr", To: "entity:world", Sides: "ingress"}}},
 	} {
 		if _, _, err := GenerateCNPs(snap, tc.rules); err == nil {
 			t.Errorf("%s: want error", tc.name)
 		}
+	}
+}
+
+// BE-4: a workload with no stable labels would generate matchLabels:{} — a
+// namespace-wide allow. GenerateCNPs must refuse rather than emit that.
+func TestSimpleRuleRejectsLabellessWorkload(t *testing.T) {
+	snap := testSnap()
+	snap.Workloads = append(snap.Workloads, snapshot.Workload{
+		Namespace: "media", Name: "bare", Kind: "Deployment", Replicas: 1})
+
+	// Label-less workload as the subject (egress side).
+	if _, _, err := GenerateCNPs(snap, []SimpleRule{
+		{From: "media/bare", To: "qbit/qbittorrent"},
+	}); err == nil {
+		t.Error("a label-less subject workload must be rejected")
+	}
+	// Label-less workload as the peer (would become a namespace-wide peer).
+	if _, _, err := GenerateCNPs(snap, []SimpleRule{
+		{From: "media/sonarr", To: "media/bare"},
+	}); err == nil {
+		t.Error("a label-less peer workload must be rejected")
+	}
+}
+
+// BE-7: a deletion of a policy that is not in the snapshot is a caller error,
+// surfaced as ErrNoSuchPolicy so the handler can map it to 400.
+func TestDeleteUnknownPolicyIsErrNoSuchPolicy(t *testing.T) {
+	snap := testSnap()
+	_, err := Compute(snap, Changes{Delete: []string{"CiliumNetworkPolicy/media/ghost"}})
+	if !errors.Is(err, ErrNoSuchPolicy) {
+		t.Errorf("err = %v, want ErrNoSuchPolicy", err)
+	}
+}
+
+// BE-7: an empty change set surfaces as ErrEmptyChangeSet (also a 400).
+func TestEmptyChangeSetIsErrEmptyChangeSet(t *testing.T) {
+	snap := testSnap()
+	_, err := Compute(snap, Changes{})
+	if !errors.Is(err, ErrEmptyChangeSet) {
+		t.Errorf("err = %v, want ErrEmptyChangeSet", err)
 	}
 }

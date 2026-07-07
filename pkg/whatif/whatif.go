@@ -5,6 +5,7 @@ package whatif
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -13,6 +14,18 @@ import (
 	"github.com/cilium/cilium/pkg/u8proto"
 
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
+)
+
+// Sentinel errors for change-set problems the caller can act on. Both are
+// user mistakes (the HTTP handler maps them to 400), so callers match with
+// errors.Is rather than sniffing message text.
+var (
+	// ErrNoSuchPolicy is returned when a deletion names a policy that is not
+	// in the snapshot.
+	ErrNoSuchPolicy = errors.New("no such policy in the snapshot")
+	// ErrEmptyChangeSet is returned when a change set resolves to nothing to
+	// simulate.
+	ErrEmptyChangeSet = errors.New("change set is empty: nothing to simulate")
 )
 
 // canaryPort probes "any port not named by any rule" so allow-all edges
@@ -304,12 +317,12 @@ func applyChanges(base []snapshot.Policy, ch Changes) ([]snapshot.Policy, []stri
 	}
 	for _, d := range ch.Delete {
 		if !seenDelete[d] {
-			return nil, nil, fmt.Errorf("--delete %s: no such policy in the snapshot", d)
+			return nil, nil, fmt.Errorf("delete %s: %w", d, ErrNoSuchPolicy)
 		}
 	}
 	slices.Sort(changes)
 	if len(changes) == 0 {
-		return nil, nil, fmt.Errorf("change set is empty: nothing to simulate")
+		return nil, nil, ErrEmptyChangeSet
 	}
 	return out, changes, nil
 }

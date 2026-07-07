@@ -149,7 +149,23 @@ func (s *policyStats) SelectorPolicyCalculation() *spanstat.SpanStat  { return &
 // newEngine builds a repository from the given policy set and pre-loads
 // every node identity, following the exact construction cilium's own
 // LookupFlow tests use.
-func newEngine(pols []snapshot.Policy, nodes []node, idmap identity.IdentityMap) (*engine, error) {
+//
+// The rule-insertion calls (MustAddList / MustAddPolicyEntries) are cilium's
+// test-only helpers that panic on a rule they consider invalid. We sanitize
+// and skip bad rules before adding, but a rule that survives Sanitize yet
+// trips an invariant during insertion would otherwise crash the whole server
+// on request-path input — so insertion is wrapped to convert a panic into a
+// returned error.
+func newEngine(pols []snapshot.Policy, nodes []node, idmap identity.IdentityMap) (e *engine, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e, err = nil, fmt.Errorf("cilium rejected a draft policy while loading the engine: %v", r)
+		}
+	}()
+	return newEngineUnsafe(pols, nodes, idmap)
+}
+
+func newEngineUnsafe(pols []snapshot.Policy, nodes []node, idmap identity.IdentityMap) (*engine, error) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	idmgr := identitymanager.NewIDManager(logger)
 	repo := policy.NewPolicyRepository(logger, idmap, nil, nil, idmgr, testpolicy.NewPolicyMetricsNoop())

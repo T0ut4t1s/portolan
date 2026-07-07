@@ -40,9 +40,9 @@ var worldLike = map[string]bool{
 func ComputeAudit(g *Graph) *Audit {
 	a := &Audit{DeadRefs: g.DeadRefs}
 
-	deny := map[string]bool{}
+	denyIngress := map[string]bool{}
 	for _, ns := range g.Namespaces {
-		deny[ns.Name] = ns.DefaultDeny
+		denyIngress[ns.Name] = ns.DefaultDenyIngress
 		if !ns.DefaultDeny && len(ns.Workloads) > 0 {
 			a.NoDefaultDeny = append(a.NoDefaultDeny, ns.Name)
 		}
@@ -52,7 +52,9 @@ func ComputeAudit(g *Graph) *Audit {
 	for _, e := range g.Edges {
 		if _, ok := nodeNS(e.Src); ok {
 			if dNS, ok := nodeNS(e.Dst); ok {
-				if e.DeclaredEgress && !e.BroadEgress && !e.DeclaredIngress && deny[dNS] {
+				// A half-open is specifically egress-allowed / ingress-dropped:
+				// the receiver must have an ingress default-deny it never opens.
+				if e.DeclaredEgress && !e.BroadEgress && !e.DeclaredIngress && denyIngress[dNS] {
 					a.HalfOpen = append(a.HalfOpen, e)
 				}
 			}

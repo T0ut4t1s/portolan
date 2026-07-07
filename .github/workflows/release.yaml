@@ -9,7 +9,25 @@ permissions:
   packages: write
 
 jobs:
+  # A tag must not publish a build that would fail CI: the release job below
+  # only runs after this gate passes (ci.yaml only covers push/PR, so a tag
+  # pushed straight to a bad commit would otherwise ship unverified).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      - name: build
+        run: go build ./...
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -53,11 +53,19 @@ type Graph struct {
 // Namespace groups the workload nodes it contains.
 type Namespace struct {
 	Name string `json:"name"`
-	// DefaultDeny is a heuristic flag: true when a policy in (or covering)
-	// the namespace selects all endpoints with no allow rules.
-	DefaultDeny bool       `json:"defaultDeny,omitempty"`
-	PolicyCount int        `json:"policyCount"`
-	Workloads   []Workload `json:"workloads"`
+	// DefaultDeny is a heuristic flag: true when the namespace has a
+	// default-deny posture in either direction. It is the OR of the two
+	// per-direction flags below, kept for the namespace badge and backward
+	// compatibility.
+	DefaultDeny bool `json:"defaultDeny,omitempty"`
+	// DefaultDenyIngress/DefaultDenyEgress split the posture by direction:
+	// an all-endpoints policy governing that direction. The ingress flag is
+	// what a half-open finding turns on — an egress-only deny does not stop
+	// a workload from being reached.
+	DefaultDenyIngress bool       `json:"defaultDenyIngress,omitempty"`
+	DefaultDenyEgress  bool       `json:"defaultDenyEgress,omitempty"`
+	PolicyCount        int        `json:"policyCount"`
+	Workloads          []Workload `json:"workloads"`
 }
 
 // Workload is one node inside a namespace card.

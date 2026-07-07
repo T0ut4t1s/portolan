@@ -630,6 +630,13 @@ const DATA = __PORTOLAN_DATA__;
     DATA.warnings = (DATA.warnings || []).concat(
       ["flow capture failed (" + DATA.flows.reason + ") — map shows declared policy only"]);
   }
+  // A dropped flow whose endpoint is no longer on the map (a crashed or
+  // scaled-to-zero pod) can't be drawn, but a hidden denial must never be
+  // silent — surface the count in the honesty bar.
+  if (FLOWS && FLOWS.notShownDrops) {
+    DATA.warnings = (DATA.warnings || []).concat(
+      [FLOWS.notShownDrops + " dropped flow(s) hidden — an endpoint is no longer on the map"]);
+  }
   if (DATA.warnings && DATA.warnings.length) {
     const w = $("#warnbar");
     w.hidden = false;
@@ -777,14 +784,23 @@ const DATA = __PORTOLAN_DATA__;
   const wifPairs = rules => new Set(rules.filter(r => !r.del).map(r => r.from + "|" + r.to));
   // wifViewDeltas: the sim result filtered to the selected rows. Allow
   // deltas match by pair; REMOVED deltas match by provenance — the engine
-  // names the deleted policy in each removed delta's via. Deltas not
-  // attributable to ANY staged row (selector side effects) always show —
-  // hiding a side effect would defeat the point of simulating.
+  // names the deleted policy in each removed delta's via.
+  //
+  // An added/half-open delta matching no staged allow pair is a side effect
+  // of the staged changes. When any removal is staged it is (almost always) a
+  // consequence of a removal — removing a default-deny opens passages no allow
+  // rule names — so it projects only while a removal is selected, hiding in
+  // step with the removed (red) deltas instead of persisting after every
+  // removal is unticked. With no removal staged it is a pure allow-selector
+  // side effect and always shows.
   function wifViewDeltas(){
     if (!wifSim || !wifSim.result) return null;
     const r = wifSim.result;
     const selP = wifPairs(wifSel()), allP = wifPairs(wifRules);
-    const keep = d => selP.has(d.s + "|" + d.d) || !allP.has(d.s + "|" + d.d);
+    const anyDelStaged = wifDels().length > 0;
+    const anyDelSel = wifSel().some(x => x.del);
+    const keep = d => selP.has(d.s + "|" + d.d) ||
+      (!allP.has(d.s + "|" + d.d) && (anyDelStaged ? anyDelSel : true));
     const added = (r.added || []).filter(keep);
     const hopen = (r.halfOpenIntroduced || []).filter(keep);
     const selDel = new Set(wifSel().filter(x => x.del).map(x => x.del));
@@ -1780,11 +1796,11 @@ const DATA = __PORTOLAN_DATA__;
   });
   grid.addEventListener("click", e => {
     const chip = e.target.closest(".chip");
-    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; findingFilter = null; clearSearch(); redraw(); return; }
+    if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; findingFilter = null; exitAudit(); clearSearch(); redraw(); return; }
     const head = e.target.closest(".ns-head");
     if (head) {
       const ns = head.parentElement.dataset.ns;
-      focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; findingFilter = null; clearSearch(); redraw();
+      focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; findingFilter = null; exitAudit(); clearSearch(); redraw();
     }
   });
   function runQuery(){
@@ -1908,8 +1924,16 @@ const DATA = __PORTOLAN_DATA__;
   // view states (pin, passage query, focus, finding filter) release so the
   // what-if scenario is what the map shows. Map clicks made while the
   // panel is open still win — until the next panel action.
+  // exitAudit releases the audit toggle — its own pressed state and the map
+  // filter. Any control that navigates the map away from the audit view calls
+  // it, so the button never stays lit over a view it no longer describes (and
+  // the next audit click isn't a silent no-op un-toggle).
+  function exitAudit(){
+    if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+  }
   function wifAssertView(){
     pinned = queryPair = focusNS = findingFilter = null;
+    exitAudit();
   }
 
   function renderWifPanel(){
@@ -1987,13 +2011,17 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   async function wifSimulate(){
-    wifSim = null; wifErrText = "";
+    wifErrText = "";
     if (!wifRules.length){
       // Invalidate any simulation still in flight — its response landing
       // after the last rule was removed would resurrect stale metrics.
-      wifSeq++; wifBusy = false;
+      wifSim = null; wifSeq++; wifBusy = false;
       renderWifPanel(); wifIdleInspect(); redraw(); return;
     }
+    // Keep the previous result on screen during the ~1s round-trip — the seq
+    // guard already discards stale responses, so blanking it every edit only
+    // flickers the overlay and metrics. It's replaced the moment the new
+    // result lands.
     const seq = ++wifSeq;
     wifBusy = true; renderWifPanel();
     try {
@@ -2130,7 +2158,6 @@ const DATA = __PORTOLAN_DATA__;
     document.body.classList.toggle("wif-on", wifOn);
     if (wifOn){
       wifAssertView();
-      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
       renderWifPanel();
       if (wifRules.length && !wifSim && !wifBusy) wifSimulate();
       wifIdleInspect();
@@ -2184,7 +2211,9 @@ const DATA = __PORTOLAN_DATA__;
   });
   rail.addEventListener("click", e => {
     const x = e.target.closest(".ext");
-    if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; findingFilter = null; clearSearch(); redraw(); }
+    // Pinning a rail node must clear queryPair — it outranks pinned, so a
+    // pin right after a passage check would otherwise be a silent no-op.
+    if (x) { pinned = pinned === x.dataset.id ? null : x.dataset.id; focusNS = null; queryPair = null; findingFilter = null; exitAudit(); clearSearch(); redraw(); }
   });
   // Externals are first-class: hover peeks their neighborhood exactly like
   // a workload chip (mousemove — real travel only, same as the grid).
