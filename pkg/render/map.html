@@ -1025,11 +1025,8 @@ const DATA = __PORTOLAN_DATA__;
     if (!query) return true;
     return match(query);
   }
-  // wifTypingIds: the nodes the composer's text currently matches — what a
-  // click-select would land on. From/to match workloads and externals; a
-  // removal key resolved in the del field contributes the policy's whole
-  // footprint, so picking a policy previews its scenario like picking an
-  // endpoint does.
+  // wifTypingIds: the workloads and externals the composer's from/to text
+  // currently matches — what a click-select would land on.
   function wifTypingIds(){
     const ids = new Set();
     [wifTyping.from, wifTyping.to].filter(Boolean).forEach(q => {
@@ -1040,10 +1037,15 @@ const DATA = __PORTOLAN_DATA__;
         if (id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q)) ids.add(id);
       });
     });
-    const dk = wifTyping.del ? polExpand(wifTyping.del) : "";
-    if (dk && (DATA.policyRules || {})[dk]) polFootprint(dk).forEach(id => ids.add(id));
     return ids;
   }
+  // wifTypingDel: the policy key the removal field currently resolves to
+  // (abbreviated or full), or null — typing a policy previews its
+  // scenario the way typing an endpoint does.
+  const wifTypingDel = () => {
+    const dk = wifTyping.del ? polExpand(wifTyping.del) : "";
+    return dk && (DATA.policyRules || {})[dk] ? dk : null;
+  };
 
   // neighborhoodNS: the namespaces a node's edges touch (plus its own).
   // Phantoms have no id-derived namespace but may be docked in one.
@@ -1144,17 +1146,32 @@ const DATA = __PORTOLAN_DATA__;
       // never moves the board, only the projected connections; close the
       // panel and this contraction lifts.
       contract = new Set();
-      wifScopeAll().forEach(id => {
-        // Entities have no home namespace but still have a neighborhood —
-        // a world→app rule must keep every card world connects to, the
-        // same board the composer's typing preview showed.
-        const ns = homeNS(id);
-        if (ns) contract.add(ns);
-        neighborhoodNS(id).forEach(n => contract.add(n));
+      // Allow rules: both endpoints carry their FULL neighborhoods — two
+      // nodes' context. Entities have no home namespace but still have a
+      // neighborhood (a world→app rule keeps every card world connects
+      // to, the same board the composer's typing preview showed).
+      wifRules.forEach(r => {
+        if (r.del) return;
+        [r.from, r.to].forEach(id => {
+          const ns = homeNS(id);
+          if (ns) contract.add(ns);
+          neighborhoodNS(id).forEach(n => contract.add(n));
+        });
       });
-      // A staged removal's own namespace always belongs to the scenario,
-      // footprint or not (default-deny policies back no allow edge).
-      wifDels().forEach(r => { const n = polNS(r.del); if (n) contract.add(n); });
+      // Removals: the scenario IS the passages — every namespace the
+      // policy's footprint touches, plus its own (default-deny backs no
+      // allow edge). NOT the transitive neighborhood of every far end:
+      // a hub policy's peers' peers are the whole cluster, and the board
+      // degenerates into the default view with red lines on top.
+      wifDels().forEach(r => {
+        polFootprint(r.del).forEach(id => { const ns = homeNS(id); if (ns) contract.add(ns); });
+        const n = polNS(r.del); if (n) contract.add(n);
+      });
+      // Simulation deltas (side effects included) touch namespaces the
+      // same way — the passage names both sides already.
+      const res = wifSim && wifSim.result;
+      if (res) [...(res.added || []), ...(res.halfOpenIntroduced || []), ...(res.removed || [])]
+        .forEach(d => [d.s, d.d].forEach(id => { const ns = homeNS(id); if (ns) contract.add(ns); }));
       if (contract.size === 0) contract = null;
     }
     else if (wifTypingActive()) {
@@ -1174,11 +1191,15 @@ const DATA = __PORTOLAN_DATA__;
         });
         wifTypingIds().forEach(id => neighborhoodNS(id).forEach(n => contract.add(n)));
         // A resolved policy key in the removal field previews that
-        // policy's scenario — its footprint came in via wifTypingIds; its
-        // namespace comes here. Without this, picking a key from the
-        // autocomplete matched no card text and blanked the whole board.
-        const dk = wifTyping.del ? polExpand(wifTyping.del) : "";
-        if (dk && (DATA.policyRules || {})[dk]) { const n = polNS(dk); if (n) contract.add(n); }
+        // policy's scenario: the namespaces its passages touch, ns-only
+        // like the staged-removal contraction. Without this, picking a
+        // key from the autocomplete matched no card text and blanked the
+        // whole board.
+        const dk = wifTypingDel();
+        if (dk){
+          polFootprint(dk).forEach(id => { const ns = homeNS(id); if (ns) contract.add(ns); });
+          const n = polNS(dk); if (n) contract.add(n);
+        }
       }
     }
     grid.querySelectorAll(".ns").forEach(card => {
@@ -1242,9 +1263,10 @@ const DATA = __PORTOLAN_DATA__;
     // Composer typing previews the matched endpoints as if selected —
     // calm neighborhoods, rings, dimming — once the match set is small
     // enough to read as a selection rather than a text filter.
-    const typeIds = (wifOn && wifTypingActive() && !active && !focusNS && !queryPair && !findingFilter)
-      ? wifTypingIds() : null;
-    const wifTypeView = !!(typeIds && typeIds.size && typeIds.size <= 14);
+    const typing = wifOn && wifTypingActive() && !active && !focusNS && !queryPair && !findingFilter;
+    const typeIds = typing ? wifTypingIds() : null;
+    const typeDel = typing ? wifTypingDel() : null;
+    const wifTypeView = !!((typeIds && typeIds.size && typeIds.size <= 14) || typeDel);
     document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter || wifView || wifTypeView));
     document.querySelectorAll(".stat[data-goto]").forEach(s =>
       s.classList.toggle("on", findingFilter === (s.dataset.goto === "aud-half" ? "half" : "drops")));
@@ -1269,7 +1291,10 @@ const DATA = __PORTOLAN_DATA__;
     else if (focusNS) drawFocus(focusNS);
     else if (findingFilter) drawFinding(findingFilter);
     else if (wifView) drawWifScenario();
-    else if (wifTypeView) drawNeighborhoods(typeIds);
+    else if (wifTypeView) {
+      const seen = drawNeighborhoods(typeIds.size <= 14 ? typeIds : new Set());
+      if (typeDel) drawPolicyEdges(typeDel, seen);
+    }
     else drawOverview();
     drawWifOverlay(); // projected draft rules ride on top of ANY view
     overlayEdge();
@@ -1317,30 +1342,34 @@ const DATA = __PORTOLAN_DATA__;
   // passages as calm lines — the red delta paints over them while the row
   // projects; unticking de-emphasizes, it never blanks. Checkboxes move
   // only the bold projections on top.
+  // drawPolicyEdges: a policy's declared passages as calm context lines,
+  // shared by the staged-removal scenario and the removal field's typing
+  // preview so the two states are pixel-identical.
+  function drawPolicyEdges(key, seen){
+    DATA.edges.forEach(e => {
+      if (!(e.policies || []).includes(key)) return;
+      if (e.dead && !showDead) return;
+      const k = e.s + "|" + e.d;
+      if (seen.has(k)) return; seen.add(k);
+      const es = elFor(e.s), ed = elFor(e.d);
+      if (!es || !ed) return;
+      [e.s, e.d].forEach(nid => {
+        const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
+                  rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
+        if (c && !c.classList.contains("sel")) c.classList.add("adj");
+      });
+      drawPath(anchor(es), anchor(ed), "edge mid" + (halfOpen(e) ? " half" : "") +
+        (nodeNS(e.s) && nodeNS(e.d) ? "" : " ext") + (obsFor(e.s, e.d) ? " obs" : ""), "");
+    });
+    grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+    });
+  }
   function drawWifScenario(){
     const ids = new Set();
     wifRules.forEach(r => { if (!r.del){ ids.add(r.from); ids.add(r.to); } });
     const seen = drawNeighborhoods(ids);
-    wifDels().forEach(r => {
-      DATA.edges.forEach(e => {
-        if (!(e.policies || []).includes(r.del)) return;
-        if (e.dead && !showDead) return;
-        const key = e.s + "|" + e.d;
-        if (seen.has(key)) return; seen.add(key);
-        const es = elFor(e.s), ed = elFor(e.d);
-        if (!es || !ed) return;
-        [e.s, e.d].forEach(nid => {
-          const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
-                    rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
-          if (c && !c.classList.contains("sel")) c.classList.add("adj");
-        });
-        drawPath(anchor(es), anchor(ed), "edge mid" + (halfOpen(e) ? " half" : "") +
-          (nodeNS(e.s) && nodeNS(e.d) ? "" : " ext") + (obsFor(e.s, e.d) ? " obs" : ""), "");
-      });
-    });
-    if (wifDels().length) grid.querySelectorAll(".ns").forEach(card => {
-      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
-    });
+    wifDels().forEach(r => drawPolicyEdges(r.del, seen));
   }
 
   // drawFinding: the map reduced to one finding class — every half-open
