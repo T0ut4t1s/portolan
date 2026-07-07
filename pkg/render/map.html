@@ -162,9 +162,11 @@
   /* Reset speaks the finding chips' exact language: quiet white chip,
      accent border on hover — one hover grammar across the whole row.
      The accent ↺ glyph alone marks it as the escape hatch. */
-  .stat-reset{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:left;
+  .stat-reset{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:center;
     color:var(--muted);}
-  .stat-reset b{color:var(--accent);}
+  /* Glyph centered above the copy; rotated -90° and mirrored so the arc sweeps
+     with the redo/reset vernacular rather than the bare counter-clockwise ↺. */
+  .stat-reset b{color:var(--accent);display:block;transform:rotate(-90deg) scaleX(-1);}
   .stat-reset:hover{border-color:var(--accent);}
   .stat-reset:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
@@ -173,9 +175,12 @@
      accent-highlighted while the panel is open; allow-GREEN while any
      projection is live — green is this map's "draft passage" color (red
      would read as an alert, and a live draft is not an alarm). */
-  .stat-wif{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:left;
-    display:flex;flex-direction:column;justify-content:center;}
-  .stat-wif b:empty{display:none;} /* no glyph when nothing is projected */
+  .stat-wif{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:center;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  /* Glyph slot: a ? invites at rest (mirrors reset's ↺ above its copy); the
+     accent tone marks it as the icon. When rules are live the slot swaps to the
+     projected-rule count (green, below). */
+  .stat-wif b{color:var(--accent);}
   /* Hover matches the finding chips: border highlight only, no invert.
      Open = accent-soft + ring (the row's .on language); live = green. */
   .stat-wif:hover{border-color:var(--accent);}
@@ -615,7 +620,7 @@ const DATA = __PORTOLAN_DATA__;
     `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
   $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
     `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>` +
-    `<button class="stat stat-wif" id="wifbtn" aria-pressed="false"><b></b>what-if</button>` +
+    `<button class="stat stat-wif" id="wifbtn" aria-pressed="false"><b>?</b>what-if</button>` +
     `<button class="stat stat-reset" id="reset" title="clear all selections and filters"><b>↺</b>reset</button>`;
   $("#stats").addEventListener("click", e => {
     const s = e.target.closest(".stat[data-goto]");
@@ -1923,7 +1928,7 @@ const DATA = __PORTOLAN_DATA__;
     const n = wifSel().length;
     const chip = $("#wifbtn");
     chip.classList.toggle("live", n > 0);
-    chip.querySelector("b").textContent = n ? String(n) : "";
+    chip.querySelector("b").textContent = n ? String(n) : "?";
     chip.title = n
       ? n + " what-if rule(s) projected on the map — click to open the panel"
       : "what-if: draft allow rules, simulate with Cilium's engine, project the delta on the map";
