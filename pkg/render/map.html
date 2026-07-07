@@ -1135,7 +1135,13 @@ const DATA = __PORTOLAN_DATA__;
 
   function redraw(){
     const active = hovered || pinned;
-    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter));
+    // The panel owning the content (open, rules ticked, nothing else
+    // selected) is a committed view like a pin or a finding: edges must
+    // lift ABOVE the cards (dimming raises #edges to z3) or the scenario
+    // draws behind the card placeholders and reads as the overview.
+    const wifView = wifOn && wifProjecting() && !wifTypingActive() &&
+                    !active && !focusNS && !queryPair && !findingFilter;
+    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter || wifView));
     document.querySelectorAll(".stat[data-goto]").forEach(s =>
       s.classList.toggle("on", findingFilter === (s.dataset.goto === "aud-half" ? "half" : "drops")));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
@@ -1158,9 +1164,39 @@ const DATA = __PORTOLAN_DATA__;
     else if (pinned) drawNode(pinned, false);
     else if (focusNS) drawFocus(focusNS);
     else if (findingFilter) drawFinding(findingFilter);
+    else if (wifView) drawWifScenario();
     else drawOverview();
     drawWifOverlay(); // projected draft rules ride on top of ANY view
     overlayEdge();
+  }
+
+  // drawWifScenario: the base layer when the panel owns the view — the
+  // selected allow rules' endpoints drawn as calm chip-level neighborhoods
+  // (the same visual language as a pinned node or the audit view), never
+  // the namespace-level overview texture. Removal scenarios carry their
+  // own picture: the overlay's dashed red passages against a quiet, dimmed
+  // backdrop. Observed drops stay on the map as always.
+  function drawWifScenario(){
+    const seen = new Set(), done = new Set();
+    wifSel().filter(r => !r.del).forEach(r => [r.from, r.to].forEach(id => {
+      if (done.has(id)) return; done.add(id);
+      (edgesByNode.get(id) || []).forEach(e => {
+        if (e.dead && !showDead) return;
+        const key = e.s + "|" + e.d;
+        if (seen.has(key)) return; seen.add(key);
+        const es = elFor(e.s), ed = elFor(e.d);
+        if (!es || !ed) return;
+        [e.s, e.d].forEach(nid => {
+          const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
+                    rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
+          if (c) c.classList.add("adj");
+        });
+        drawPath(anchor(es), anchor(ed), e.dead ? "edge mid dead" :
+          "edge mid" + (halfOpen(e) ? " half" : "") + (obsFor(e.s, e.d) ? " obs" : ""), "");
+      });
+      drawDrops(id);
+    }));
+    if (!done.size) drawDrops(null);
   }
 
   // drawFinding: the map reduced to one finding class — every half-open
@@ -1234,6 +1270,11 @@ const DATA = __PORTOLAN_DATA__;
                   rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
         if (c) c.classList.add("sel");
       });
+      // Under dimming (the scenario view), cards not carrying an active
+      // chip fade — the scenario's own namespaces must stay lit.
+      grid.querySelectorAll(".ns").forEach(card => {
+        if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+      });
     }
     const visEl = elFor; // elFor already skips filtered-out elements
     const fixes = new Map();
@@ -1300,7 +1341,10 @@ const DATA = __PORTOLAN_DATA__;
       const [a,b] = key.split("|");
       const ea = grid.querySelector(`.ns[data-ns="${CSS.escape(a)}"]`);
       const eb = grid.querySelector(`.ns[data-ns="${CSS.escape(b)}"]`);
-      if (!ea || !eb) return;
+      // Contraction-hidden cards measure as zero rects at the viewport
+      // origin — an anchor there draws the edge a full page above the
+      // stage. visibleNS only covers the search filter, not contraction.
+      if (!ea || !eb || ea.style.display === "none" || eb.style.display === "none") return;
       // No labels in the overview — it's a shape to scan, not a table.
       // Pairs carrying observed traffic breathe; the rest stay still.
       drawPath(anchor(ea), anchor(eb),
@@ -1771,7 +1815,12 @@ const DATA = __PORTOLAN_DATA__;
 
   async function wifSimulate(){
     wifSim = null; wifErrText = "";
-    if (!wifRules.length){ renderWifPanel(); wifIdleInspect(); redraw(); return; }
+    if (!wifRules.length){
+      // Invalidate any simulation still in flight — its response landing
+      // after the last rule was removed would resurrect stale metrics.
+      wifSeq++; wifBusy = false;
+      renderWifPanel(); wifIdleInspect(); redraw(); return;
+    }
     const seq = ++wifSeq;
     wifBusy = true; renderWifPanel();
     try {
