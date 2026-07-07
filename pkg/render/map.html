@@ -811,13 +811,35 @@ const DATA = __PORTOLAN_DATA__;
     if (v) v.removed.forEach(d => { ids.add(d.s); ids.add(d.d); });
     return ids;
   }
+  // polFootprint: the node ids a policy's declared passages touch — the
+  // board footprint of removing it, known instantly from the snapshot
+  // without the engine (and even when the removal changes no verdict
+  // because another policy still allows the same passages).
+  function polFootprint(key){
+    const ids = new Set();
+    DATA.edges.forEach(e => {
+      if ((e.policies || []).includes(key)) { ids.add(e.s); ids.add(e.d); }
+    });
+    return ids;
+  }
+  // polNS: the namespace segment of a namespaced policy key — the one card
+  // that must stay on the board even for footprint-less policies (a
+  // default-deny backs no allow edge but its namespace IS the scenario).
+  const polNS = key => {
+    const p = key.split("/");
+    return p.length === 3 && nsByName.has(p[1]) ? p[1] : null;
+  };
   // wifScopeAll: the nodes EVERY staged rule involves, ticked or not —
   // the content filter while the panel is open. Checkboxes choose which
-  // connections project; they never move the board underneath. Until the
-  // simulation lands, the rules' own endpoints stand in for its deltas.
+  // connections project; they never move the board underneath. Allow rules
+  // contribute their endpoints, removals their policy's footprint — both
+  // known before the simulation lands, which then adds its deltas.
   function wifScopeAll(){
     const ids = new Set();
-    wifRules.forEach(r => { if (!r.del) { ids.add(r.from); ids.add(r.to); } });
+    wifRules.forEach(r => {
+      if (r.del) polFootprint(r.del).forEach(id => ids.add(id));
+      else { ids.add(r.from); ids.add(r.to); }
+    });
     const res = wifSim && wifSim.result;
     if (res) [...(res.added || []), ...(res.halfOpenIntroduced || []), ...(res.removed || [])]
       .forEach(d => { ids.add(d.s); ids.add(d.d); });
@@ -1003,9 +1025,11 @@ const DATA = __PORTOLAN_DATA__;
     if (!query) return true;
     return match(query);
   }
-  // wifTypingIds: the workloads and externals the composer's from/to text
-  // currently matches — the nodes a click-select would land on. The del
-  // field stays a plain text filter (policies aren't nodes).
+  // wifTypingIds: the nodes the composer's text currently matches — what a
+  // click-select would land on. From/to match workloads and externals; a
+  // removal key resolved in the del field contributes the policy's whole
+  // footprint, so picking a policy previews its scenario like picking an
+  // endpoint does.
   function wifTypingIds(){
     const ids = new Set();
     [wifTyping.from, wifTyping.to].filter(Boolean).forEach(q => {
@@ -1016,6 +1040,8 @@ const DATA = __PORTOLAN_DATA__;
         if (id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q)) ids.add(id);
       });
     });
+    const dk = wifTyping.del ? polExpand(wifTyping.del) : "";
+    if (dk && (DATA.policyRules || {})[dk]) polFootprint(dk).forEach(id => ids.add(id));
     return ids;
   }
 
@@ -1119,11 +1145,16 @@ const DATA = __PORTOLAN_DATA__;
       // panel and this contraction lifts.
       contract = new Set();
       wifScopeAll().forEach(id => {
+        // Entities have no home namespace but still have a neighborhood —
+        // a world→app rule must keep every card world connects to, the
+        // same board the composer's typing preview showed.
         const ns = homeNS(id);
-        if (!ns) return;
-        contract.add(ns);
+        if (ns) contract.add(ns);
         neighborhoodNS(id).forEach(n => contract.add(n));
       });
+      // A staged removal's own namespace always belongs to the scenario,
+      // footprint or not (default-deny policies back no allow edge).
+      wifDels().forEach(r => { const n = polNS(r.del); if (n) contract.add(n); });
       if (contract.size === 0) contract = null;
     }
     else if (wifTypingActive()) {
@@ -1142,6 +1173,12 @@ const DATA = __PORTOLAN_DATA__;
             contract.add(name);
         });
         wifTypingIds().forEach(id => neighborhoodNS(id).forEach(n => contract.add(n)));
+        // A resolved policy key in the removal field previews that
+        // policy's scenario — its footprint came in via wifTypingIds; its
+        // namespace comes here. Without this, picking a key from the
+        // autocomplete matched no card text and blanked the whole board.
+        const dk = wifTyping.del ? polExpand(wifTyping.del) : "";
+        if (dk && (DATA.policyRules || {})[dk]) { const n = polNS(dk); if (n) contract.add(n); }
       }
     }
     grid.querySelectorAll(".ns").forEach(card => {
@@ -1271,15 +1308,39 @@ const DATA = __PORTOLAN_DATA__;
     grid.querySelectorAll(".ns").forEach(card => {
       if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
     });
+    return seen;
   }
-  // drawWifScenario: the base layer when the panel owns the view — the
-  // selected allow rules' endpoints as one selection. Removal scenarios
-  // carry their own picture: the overlay's dashed red passages against a
-  // quiet, dimmed backdrop. Observed drops stay on the map as always.
+  // drawWifScenario: the base layer when the panel owns the view — every
+  // staged rule's context, ticked or not. Allow rules: their endpoints as
+  // one selection (rings + declared edges), exactly what the composer
+  // previewed before the rule was added. Removals: the policy's declared
+  // passages as calm lines — the red delta paints over them while the row
+  // projects; unticking de-emphasizes, it never blanks. Checkboxes move
+  // only the bold projections on top.
   function drawWifScenario(){
     const ids = new Set();
-    wifSel().forEach(r => { if (!r.del){ ids.add(r.from); ids.add(r.to); } });
-    drawNeighborhoods(ids);
+    wifRules.forEach(r => { if (!r.del){ ids.add(r.from); ids.add(r.to); } });
+    const seen = drawNeighborhoods(ids);
+    wifDels().forEach(r => {
+      DATA.edges.forEach(e => {
+        if (!(e.policies || []).includes(r.del)) return;
+        if (e.dead && !showDead) return;
+        const key = e.s + "|" + e.d;
+        if (seen.has(key)) return; seen.add(key);
+        const es = elFor(e.s), ed = elFor(e.d);
+        if (!es || !ed) return;
+        [e.s, e.d].forEach(nid => {
+          const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
+                    rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
+          if (c && !c.classList.contains("sel")) c.classList.add("adj");
+        });
+        drawPath(anchor(es), anchor(ed), "edge mid" + (halfOpen(e) ? " half" : "") +
+          (nodeNS(e.s) && nodeNS(e.d) ? "" : " ext") + (obsFor(e.s, e.d) ? " obs" : ""), "");
+      });
+    });
+    if (wifDels().length) grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+    });
   }
 
   // drawFinding: the map reduced to one finding class — every half-open
@@ -1947,7 +2008,10 @@ const DATA = __PORTOLAN_DATA__;
     $("#wf-from").value = ""; $("#wf-to").value = ""; $("#wf-ports").value = "";
     wifTyping.from = wifTyping.to = "";
     wifAssertView();
-    renderWifPanel(); wifSimulate();
+    // Redraw NOW from the rule's own endpoints — the board must land on
+    // the scenario the moment the rule is staged, not when the ~1s
+    // simulation returns (the stale typing preview lingered otherwise).
+    renderWifPanel(); redraw(); wifSimulate();
   }
   $("#wf-add").addEventListener("click", wifAdd);
   [$("#wf-from"), $("#wf-to"), $("#wf-ports")].forEach(el =>
@@ -1998,7 +2062,9 @@ const DATA = __PORTOLAN_DATA__;
     $("#wf-del").value = "";
     wifTyping.del = "";
     wifAssertView();
-    renderWifPanel(); wifSimulate();
+    // Same instant landing as wifAdd: the policy footprint filters the
+    // board immediately; the simulation adds its deltas when it returns.
+    renderWifPanel(); redraw(); wifSimulate();
   }
   $("#wf-delbtn").addEventListener("click", wifAddDel);
   $("#wf-del").addEventListener("keydown", e => { if (e.key === "Enter") wifAddDel(); });
