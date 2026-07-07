@@ -42,7 +42,7 @@
   .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
   .stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}
   .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;
-    padding:7px 12px;box-shadow:var(--shadow);font-size:.72rem;color:var(--muted);}
+    padding:7px 12px;box-shadow:var(--shadow);font-size:.72rem;font-weight:600;color:var(--muted);}
   .stat b{display:block;font-family:var(--mono);font-size:1.15rem;color:var(--ink);
     font-variant-numeric:tabular-nums;font-weight:600;}
 
@@ -69,8 +69,11 @@
   .ctx li{font-family:var(--mono);font-size:.72rem;margin:2px 0;word-break:break-all;}
   .btn{background:var(--surface);border:1px solid var(--line);border-radius:999px;
     padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
-  .btn:hover{border-color:var(--line-2)}
-  .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);}
+  .btn:hover{border-color:var(--accent)}
+  /* Active = soft fill + accent border + ring — the same three-part "on"
+     language as the finding chips and the open what-if chip. */
+  .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);
+    box-shadow:0 0 0 1px var(--accent);}
   /* The hint gets its own full-width line, left-aligned — margin-left:auto
      in the flex row made its text start mid-page at the leftover space. */
   .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);flex-basis:100%;}
@@ -141,19 +144,20 @@
   .findlabel{position:absolute;top:-7px;left:10px;background:var(--bg);padding:0 6px;
     font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
     color:var(--muted);line-height:1;white-space:nowrap;}
-  .findgroup .stat{box-shadow:none;}
+  /* :not(.on) — the group flattens resting chips but must not swallow the
+     active chip's ring (the row's one "on" language). */
+  .findgroup .stat:not(.on){box-shadow:none;}
   /* Bordered control groups: switches and the passage-check cluster read
      as units, labeled on the border line like the findings group. */
   .ctlgroup{position:relative;display:flex;align-items:center;gap:6px;
     border:1px solid var(--line-2);border-radius:12px;padding:10px 10px 8px;}
-  /* Reset lives in the stats row as an inverted chip right beside the
-     findings group — same shape as the inventory chips, opposite colors,
-     so the escape hatch stands out without breaking the row's rhythm. */
-  .stat-reset{margin-left:8px;cursor:pointer;font:inherit;text-align:left;
-    background:var(--accent-soft);border-color:var(--accent);color:var(--muted);}
+  /* Reset speaks the finding chips' exact language: quiet white chip,
+     accent border on hover — one hover grammar across the whole row.
+     The accent ↺ glyph alone marks it as the escape hatch. */
+  .stat-reset{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:left;
+    color:var(--muted);}
   .stat-reset b{color:var(--accent);}
-  .stat-reset:hover{background:var(--accent);color:var(--accent-soft);}
-  .stat-reset:hover b{color:var(--surface);}
+  .stat-reset:hover{border-color:var(--accent);}
   .stat-reset:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
   /* The what-if chip sits beside reset with the same geometry: value slot
@@ -161,18 +165,18 @@
      accent-highlighted while the panel is open; allow-GREEN while any
      projection is live — green is this map's "draft passage" color (red
      would read as an alert, and a live draft is not an alarm). */
-  .stat-wif{margin-left:8px;cursor:pointer;font:inherit;text-align:left;
+  .stat-wif{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:left;
     display:flex;flex-direction:column;justify-content:center;}
   .stat-wif b:empty{display:none;} /* no glyph when nothing is projected */
-  .stat-wif:hover{background:var(--accent);color:var(--accent-soft);border-color:var(--accent);}
-  .stat-wif:hover b{color:var(--surface);}
+  /* Hover matches the finding chips: border highlight only, no invert.
+     Open = accent-soft + ring (the row's .on language); live = green. */
+  .stat-wif:hover{border-color:var(--accent);}
   .stat-wif[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);
     box-shadow:0 0 0 1px var(--accent);}
   .stat-wif[aria-pressed="true"] b{color:var(--accent);}
   .stat-wif.live{background:var(--allow-soft);border-color:var(--allow);}
   .stat-wif.live b{color:var(--allow);}
-  .stat-wif.live:hover{background:var(--allow);color:var(--allow-soft);}
-  .stat-wif.live:hover b{color:var(--surface);}
+  .stat-wif.live:hover{border-color:var(--allow);box-shadow:0 0 0 1px var(--allow);}
   .stat-wif.live[aria-pressed="true"]{box-shadow:0 0 0 1px var(--allow);}
   .stat-wif:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
@@ -967,18 +971,27 @@ const DATA = __PORTOLAN_DATA__;
     // must keep filtering, not blank the grid.
     const match = q => name.includes(q) ||
       ns.workloads.some(w => w.name.includes(q) || w.id.includes(q));
-    // Composer typing takes over the text filter while the panel is open:
-    // every non-empty field applies, so a card matching EITHER endpoint
-    // (or the policy text) stays visible. A field holding an external
-    // (entity:/cidr:/fqdn:) matches no namespace card and must not
-    // constrain the grid — the rail shows it instead.
-    if (wifTypingActive()){
-      const extish = q => /^(entity|cidr|fqdn):/.test(q);
-      const qs = [wifTyping.from, wifTyping.to, wifTyping.del].filter(q => q && !extish(q));
-      return qs.length === 0 || qs.some(match);
-    }
+    // Composer typing is handled by the contraction in applyCardVisibility
+    // (text matches PLUS their neighborhoods — typing an endpoint previews
+    // it the way selecting it would); no per-card text veto here.
+    if (wifTypingActive()) return true;
     if (!query) return true;
     return match(query);
+  }
+  // wifTypingIds: the workloads and externals the composer's from/to text
+  // currently matches — the nodes a click-select would land on. The del
+  // field stays a plain text filter (policies aren't nodes).
+  function wifTypingIds(){
+    const ids = new Set();
+    [wifTyping.from, wifTyping.to].filter(Boolean).forEach(q => {
+      nsByName.forEach(ns => ns.workloads.forEach(w => {
+        if (w.id.toLowerCase().includes(q) || w.name.toLowerCase().includes(q)) ids.add(w.id);
+      }));
+      extById.forEach((x, id) => {
+        if (id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q)) ids.add(id);
+      });
+    });
+    return ids;
   }
 
   // neighborhoodNS: the namespaces a node's edges touch (plus its own).
@@ -1087,6 +1100,24 @@ const DATA = __PORTOLAN_DATA__;
       });
       if (contract.size === 0) contract = null;
     }
+    else if (wifTypingActive()) {
+      // Typing an endpoint previews it the way selecting it would: cards
+      // matching any typed field stay, PLUS every namespace the from/to
+      // matches connect to. Both fields preview together (union). Fields
+      // holding an external (entity:/cidr:/fqdn:) match no card and never
+      // constrain the grid — the rail shows them instead.
+      const extish = q => /^(entity|cidr|fqdn):/.test(q);
+      const qs = [wifTyping.from, wifTyping.to, wifTyping.del].filter(q => q && !extish(q));
+      if (qs.length){
+        contract = new Set();
+        nsByName.forEach((ns, name) => {
+          if (qs.some(q => name.includes(q) ||
+              ns.workloads.some(w => w.name.includes(q) || w.id.includes(q))))
+            contract.add(name);
+        });
+        wifTypingIds().forEach(id => neighborhoodNS(id).forEach(n => contract.add(n)));
+      }
+    }
     grid.querySelectorAll(".ns").forEach(card => {
       const name = card.dataset.ns;
       const vis = visibleNS(name) && (!contract || contract.has(name));
@@ -1121,10 +1152,14 @@ const DATA = __PORTOLAN_DATA__;
         ? [wifTyping.from, wifTyping.to, wifTyping.del].filter(Boolean)
         : (query ? [query] : []);
       if (qs.length) {
+        // An external stays if its own text matches, or it links into a
+        // namespace still on screen (search: visibleNS; composer typing:
+        // the contraction set, since visibleNS defers to it there).
+        const nsShown = n => visibleNS(n) && (!contract || contract.has(n));
         extKeep = new Set();
         extById.forEach((x, id) => {
           if (qs.some(q => id.toLowerCase().includes(q) || (x.name || "").toLowerCase().includes(q))) { extKeep.add(id); return; }
-          if ([...(extNSIndex.get(id) || [])].some(visibleNS)) extKeep.add(id);
+          if ([...(extNSIndex.get(id) || [])].some(nsShown)) extKeep.add(id);
         });
       }
     }
@@ -1141,7 +1176,13 @@ const DATA = __PORTOLAN_DATA__;
     // draws behind the card placeholders and reads as the overview.
     const wifView = wifOn && wifProjecting() && !wifTypingActive() &&
                     !active && !focusNS && !queryPair && !findingFilter;
-    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter || wifView));
+    // Composer typing previews the matched endpoints as if selected —
+    // calm neighborhoods, rings, dimming — once the match set is small
+    // enough to read as a selection rather than a text filter.
+    const typeIds = (wifOn && wifTypingActive() && !active && !focusNS && !queryPair && !findingFilter)
+      ? wifTypingIds() : null;
+    const wifTypeView = !!(typeIds && typeIds.size && typeIds.size <= 14);
+    document.body.classList.toggle("dimming", !!(active || focusNS || queryPair || findingFilter || wifView || wifTypeView));
     document.querySelectorAll(".stat[data-goto]").forEach(s =>
       s.classList.toggle("on", findingFilter === (s.dataset.goto === "aud-half" ? "half" : "drops")));
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
@@ -1165,21 +1206,25 @@ const DATA = __PORTOLAN_DATA__;
     else if (focusNS) drawFocus(focusNS);
     else if (findingFilter) drawFinding(findingFilter);
     else if (wifView) drawWifScenario();
+    else if (wifTypeView) drawNeighborhoods(typeIds);
     else drawOverview();
     drawWifOverlay(); // projected draft rules ride on top of ANY view
     overlayEdge();
   }
 
-  // drawWifScenario: the base layer when the panel owns the view — the
-  // selected allow rules' endpoints drawn as calm chip-level neighborhoods
-  // (the same visual language as a pinned node or the audit view), never
-  // the namespace-level overview texture. Removal scenarios carry their
-  // own picture: the overlay's dashed red passages against a quiet, dimmed
-  // backdrop. Observed drops stay on the map as always.
-  function drawWifScenario(){
-    const seen = new Set(), done = new Set();
-    wifSel().filter(r => !r.del).forEach(r => [r.from, r.to].forEach(id => {
-      if (done.has(id)) return; done.add(id);
+  // drawNeighborhoods: a set of nodes drawn as if selected together —
+  // rings on the nodes, their declared edges calm at chip level, adjacent
+  // peers marked, cards carrying activity kept lit under dimming. This is
+  // the base for the what-if scenario view AND the composer's typing
+  // preview: both are "selections" and must read exactly like one.
+  function drawNeighborhoods(ids){
+    const seen = new Set();
+    let n = 0;
+    ids.forEach(id => {
+      n++;
+      const own = grid.querySelector(`.chip[data-id="${CSS.escape(id)}"]`) ||
+                  rail.querySelector(`.ext[data-id="${CSS.escape(id)}"]`);
+      if (own) own.classList.add("sel");
       (edgesByNode.get(id) || []).forEach(e => {
         if (e.dead && !showDead) return;
         const key = e.s + "|" + e.d;
@@ -1189,14 +1234,26 @@ const DATA = __PORTOLAN_DATA__;
         [e.s, e.d].forEach(nid => {
           const c = grid.querySelector(`.chip[data-id="${CSS.escape(nid)}"]`) ||
                     rail.querySelector(`.ext[data-id="${CSS.escape(nid)}"]`);
-          if (c) c.classList.add("adj");
+          if (c && !c.classList.contains("sel")) c.classList.add("adj");
         });
         drawPath(anchor(es), anchor(ed), e.dead ? "edge mid dead" :
           "edge mid" + (halfOpen(e) ? " half" : "") + (obsFor(e.s, e.d) ? " obs" : ""), "");
       });
       drawDrops(id);
-    }));
-    if (!done.size) drawDrops(null);
+    });
+    if (!n) drawDrops(null);
+    grid.querySelectorAll(".ns").forEach(card => {
+      if (card.querySelector(".chip.sel, .chip.adj")) card.classList.add("has-active");
+    });
+  }
+  // drawWifScenario: the base layer when the panel owns the view — the
+  // selected allow rules' endpoints as one selection. Removal scenarios
+  // carry their own picture: the overlay's dashed red passages against a
+  // quiet, dimmed backdrop. Observed drops stay on the map as always.
+  function drawWifScenario(){
+    const ids = new Set();
+    wifSel().forEach(r => { if (!r.del){ ids.add(r.from); ids.add(r.to); } });
+    drawNeighborhoods(ids);
   }
 
   // drawFinding: the map reduced to one finding class — every half-open
@@ -1462,7 +1519,7 @@ const DATA = __PORTOLAN_DATA__;
   // resolved effects to the raw rule payloads (shown in a dismissible
   // overlay; the single view stays put underneath).
   const polLinks = ps => ps.map(p =>
-    `<button class="pol" data-pol="${esc(p)}">${esc(p)}</button>`).join("<br>");
+    `<button class="pol" data-pol="${esc(p)}">${esc(polAbbr(p))}</button>`).join("<br>");
 
   function ruleRow(peerId, e, dir){
     const ext = !nodeNS(peerId);
@@ -1696,12 +1753,12 @@ const DATA = __PORTOLAN_DATA__;
       return `<div class="rule" data-es="${esc(dl.s)}" data-ed="${esc(dl.d)}">
         <span class="peer">${esc(dl.s)} → ${esc(dl.d)}
           ${bk ? `<span class="tag break">breaks live traffic ×${bk}</span>` : ""}
-          <small>was via ${(dl.via || []).map(esc).join(", ")}</small></span>
+          <small>was via ${(dl.via || []).map(v => esc(polAbbr(v))).join(", ")}</small></span>
         <span class="ports bad">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
     }).join("");
     insp.innerHTML = `<p class="insp-kicker">what-if</p>
       <p class="insp-title">draft delta</p>
-      <p class="insp-sub">${(r.policyChanges || []).map(esc).join("<br>")}</p>
+      <p class="insp-sub">${(r.policyChanges || []).map(c => esc(polAbbrText(c))).join("<br>")}</p>
       ${v.breaks.length ? `<div class="half-warn"><b>removal cuts live traffic</b> — flows
         observed in the capture window ride the passages being closed.</div>` : ""}
       ${hoRows ? `<div class="half-warn"><b>half-open introduced</b> — one side declared,
@@ -1747,7 +1804,7 @@ const DATA = __PORTOLAN_DATA__;
           <input type="checkbox" class="rsel" data-i="${i}" ${r.sel ? "checked" : ""}
             title="project this removal on the map" aria-label="project removal ${i + 1} on the map">
           <span class="idx">${i + 1}</span>
-          <span class="sum"><b>−</b> ${esc(r.del)}</span>
+          <span class="sum"><b>−</b> ${esc(polAbbr(r.del))}</span>
           <span class="acts">
             <button class="btn view" data-pol="${esc(r.del)}" title="show the policy's rules as enforced now">view</button>
             <button class="btn rm" data-i="${i}" title="unstage this removal">remove</button>
@@ -1877,15 +1934,33 @@ const DATA = __PORTOLAN_DATA__;
       wifTyping[key] = this.value.trim().toLowerCase();
       redraw();
     }));
+  // Policy keys read as kind/namespace/name; the kinds are long enough to
+  // crowd out the part a human actually scans for. Display everywhere as
+  // cnp/ · ccnp/ · np/; expand back to the full kind for lookups and the
+  // API, and accept both forms typed.
+  const POLKIND = { ccnp: "CiliumClusterwideNetworkPolicy", cnp: "CiliumNetworkPolicy", np: "NetworkPolicy" };
+  function polAbbr(k){
+    for (const [a, full] of Object.entries(POLKIND))
+      if (k.startsWith(full + "/")) return a + k.slice(full.length);
+    return k;
+  }
+  function polExpand(t){
+    const m = t.match(/^(ccnp|cnp|np)\//);
+    return m ? POLKIND[m[1]] + t.slice(m[1].length) : t;
+  }
+  const polAbbrText = s => s
+    .replace(/CiliumClusterwideNetworkPolicy\//g, "ccnp/")
+    .replace(/CiliumNetworkPolicy\//g, "cnp/")
+    .replace(/\bNetworkPolicy\//g, "np/");
   // Staged removals pick from the policies the map already knows.
   {
     const pl = $("#pollist");
     Object.keys(DATA.policyRules || {}).sort().forEach(k => {
-      const o = document.createElement("option"); o.value = k; pl.appendChild(o);
+      const o = document.createElement("option"); o.value = polAbbr(k); pl.appendChild(o);
     });
   }
   function wifAddDel(){
-    const key = $("#wf-del").value.trim();
+    const key = polExpand($("#wf-del").value.trim());
     const err = $("#wf-err");
     if (!key || !(DATA.policyRules || {})[key]){
       err.textContent = "pick an existing policy — autocomplete lists every one the snapshot knows";
