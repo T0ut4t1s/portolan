@@ -33,8 +33,11 @@
   body{background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.5;
     -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
 
-  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-bottom:6px;}
-  .hdr-controls{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+  /* Header columns mirror .layout: brand over the stage, theme/hints centred
+     over the inspector column. */
+  header{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:center;margin-bottom:6px;}
+  @media(max-width:900px){header{grid-template-columns:1fr}}
+  .hdr-controls{display:flex;flex-direction:column;align-items:center;gap:7px;}
   /* The hints checkbox is a MODE switch: instructional prose (.guide)
      everywhere is on or off, persisted like the theme. Real tooltips
      (title=) are on-demand and unaffected. */
@@ -66,6 +69,18 @@
   .search{flex:1 1 220px;max-width:340px;background:var(--surface);border:1px solid var(--line);
     border-radius:999px;padding:8px 15px;font:inherit;font-size:.85rem;color:var(--ink);}
   .search:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  /* Token field: a multi-select filter — committed pills (namespaces/workloads)
+     plus a live text input. The map shows the union of every pill's scope. */
+  .tokenfield{flex:1 1 240px;max-width:430px;display:flex;flex-wrap:wrap;align-items:center;gap:5px;
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:4px 8px;min-height:38px;cursor:text;}
+  .tokenfield:focus-within{outline:2px solid var(--accent);outline-offset:1px;}
+  .tf-input{flex:1 1 70px;min-width:70px;border:none;background:none;padding:4px 3px;
+    font:inherit;font-size:.85rem;color:var(--ink);outline:none;}
+  .tf-pill{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.72rem;font-weight:600;
+    background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);border-radius:8px;padding:2px 3px 2px 8px;}
+  .tf-x{border:none;background:none;color:var(--accent);cursor:pointer;font-size:.7rem;line-height:1;
+    padding:2px 3px;border-radius:4px;}
+  .tf-x:hover{background:var(--accent);color:#fff;}
   .pq-in{flex:0 1 190px;font-family:var(--mono);font-size:.76rem;}
   .pq-arrow{font-family:var(--mono);color:var(--faint);}
   .verdict{margin-top:10px;border-radius:9px;padding:9px 12px;font-size:.8rem;font-weight:600;}
@@ -77,7 +92,7 @@
   .ctx ul{margin:4px 0 0;padding-left:16px;}
   .ctx li{font-family:var(--mono);font-size:.72rem;margin:2px 0;word-break:break-all;}
   .btn{background:var(--surface);border:1px solid var(--line);border-radius:999px;
-    padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;}
+    padding:8px 14px;font:inherit;font-size:.82rem;color:var(--ink-2);cursor:pointer;white-space:nowrap;}
   .btn:hover{border-color:var(--accent)}
   /* Active = soft fill + accent border + ring — the same three-part "on"
      language as the finding chips and the open what-if chip. */
@@ -97,19 +112,21 @@
   .readstrip .r.bad b{color:var(--deny);}
   .readstrip .sep{width:1px;height:14px;background:var(--line-2);}
 
-  /* Actions (what-if / display / reset) sit left, contiguous with the Navigate
-     group — a small extra gap sets them apart without floating them to the far
-     right (where they orphaned from the panel they open on wide screens). */
-  #wifbtn{margin-left:6px;}
   .tb-nav .findlabel{color:var(--faint);}
   .caret{font-size:.6rem;opacity:.7;margin-left:1px;}
   .btn .cnt{font-family:var(--mono);font-size:.7rem;background:var(--accent-soft);color:var(--accent);
     border-radius:20px;padding:0 7px;font-weight:700;margin-left:3px;}
   .btn .cnt[hidden]{display:none;}
-  /* what-if button: accent ring while the panel is open (via aria-pressed),
-     allow-GREEN while any projection is live — green is the map's draft color. */
-  #wifbtn.live{background:var(--allow-soft);border-color:var(--allow);color:var(--allow);}
-  #wifbtn.live .cnt{background:var(--allow);color:#fff;}
+  /* what-if: the co-equal "simulate" action beside the Navigate block — a tall
+     filled-accent button matching the block's height. Accent ring while the
+     panel is open; allow-GREEN while a projection is live. */
+  .wif-primary{align-self:stretch;padding:0 24px;font-size:.9rem;font-weight:600;border-radius:12px;
+    background:var(--accent);border-color:var(--accent);color:#fff;}
+  .wif-primary:hover{border-color:var(--accent);filter:brightness(1.06);}
+  .wif-primary[aria-pressed="true"]{background:var(--accent);color:#fff;box-shadow:0 0 0 3px var(--accent-soft);}
+  .wif-primary.live{background:var(--allow);border-color:var(--allow);color:#fff;}
+  .wif-primary.live[aria-pressed="true"]{background:var(--allow);color:#fff;box-shadow:0 0 0 3px var(--allow-soft);}
+  .wif-primary .cnt{background:rgba(255,255,255,.25);color:#fff;}
 
   /* Display (lenses) dropdown: one home for every overlay — findings and
      unmatched are composable checkboxes here, not scattered sibling buttons. */
@@ -429,7 +446,7 @@
   </div>
   <div class="hdr-controls">
     <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
-    <label class="hints-toggle" title="show or hide the instructional text throughout the page"><input type="checkbox" id="hints" checked> hints</label>
+    <label class="hints-toggle" title="show or hide the instructional text throughout the page">hints <input type="checkbox" id="hints" checked></label>
   </div>
 </header>
 <div class="readstrip" id="stats"></div>
@@ -437,15 +454,14 @@
 <div class="controls">
   <span class="ctlgroup tb-nav">
     <span class="findlabel">navigate</span>
-    <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
+    <span class="tokenfield" id="tokenfield">
+      <input class="tf-input" id="search" list="filterlist" placeholder="filter namespaces & workloads…" aria-label="Filter" autocomplete="off">
+    </span>
     <input class="search pq-in" id="qa" list="nodelist" placeholder="from…" aria-label="Passage source">
     <span class="pq-arrow">→</span>
     <input class="search pq-in" id="qb" list="nodelist" placeholder="to…" aria-label="Passage destination">
-    <button class="btn" id="qgo">check passage</button>
-  </span>
-  <datalist id="nodelist"></datalist>
-  <button class="btn" id="wifbtn" aria-pressed="false" title="draft allow rules and simulate with Cilium's engine">✎ what-if<span class="cnt" hidden></span></button>
-  <span class="lenswrap">
+    <button class="btn" id="qgo" title="check whether one workload may reach another">check</button>
+    <span class="lenswrap">
     <button class="btn" id="lensbtn" aria-expanded="false" aria-haspopup="true" title="overlays: findings, unmatched selectors">◧ display<span class="cnt" id="lenscnt" hidden></span><span class="caret">▾</span></button>
     <div class="lensmenu" id="lensmenu" hidden>
       <h5>findings</h5>
@@ -454,8 +470,12 @@
       <div class="lensdiv" id="lens-dead-div" hidden></div>
       <label class="lensrow" id="lens-dead-row" hidden><input type="checkbox" id="lens-dead"><span class="sw dead"></span> unmatched selectors <span class="lr-n" id="lens-dead-n">0</span></label>
     </div>
+    </span>
+    <button class="btn stat-reset" id="reset" title="clear all selections and filters"><b>↺</b></button>
   </span>
-  <button class="btn stat-reset" id="reset" title="clear all selections and filters"><b>↺</b></button>
+  <datalist id="nodelist"></datalist>
+  <datalist id="filterlist"></datalist>
+  <button class="btn wif-primary" id="wifbtn" aria-pressed="false" title="draft allow rules and simulate with Cilium's engine">✎ what-if<span class="cnt" hidden></span></button>
   <span class="hint guide" id="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
@@ -833,6 +853,10 @@ const DATA = __PORTOLAN_DATA__;
   // ---------- view state ----------
   let pinned = null, hovered = null, focusNS = null, query = "", queryPair = null,
       auditMode = false, hoverEdgeKey = null, findingFilter = null; // null | "half" | "drops"
+  // filters: committed filter pills (namespace names / workload ids). The active
+  // filter is their union PLUS the live-typed `query`; empty = no filter.
+  let filters = [];
+  const filterToks = () => query ? filters.concat(query) : filters.slice();
   // What-if state: the panel's rules and the engine's last verdict.
   // Simulation always covers ALL rules (the engine judges the draft as a
   // whole); each rule's checkbox (r.sel) chooses what the map projects.
@@ -1112,8 +1136,9 @@ const DATA = __PORTOLAN_DATA__;
     // (text matches PLUS their neighborhoods — typing an endpoint previews
     // it the way selecting it would); no per-card text veto here.
     if (wifTypingActive()) return true;
-    if (!query) return true;
-    return match(query);
+    const toks = filterToks();
+    if (!toks.length) return true;
+    return toks.some(match); // union: a namespace stays if it matches ANY pill
   }
   // wifTypingIds: the workloads and externals the composer's from/to text
   // currently matches — what a click-select would land on.
@@ -1324,7 +1349,7 @@ const DATA = __PORTOLAN_DATA__;
     else {
       const qs = wifTypingActive()
         ? [wifTyping.from, wifTyping.to, wifTyping.del].filter(Boolean)
-        : (query ? [query] : []);
+        : filterToks();
       if (qs.length) {
         // An external stays if its own text matches, or it links into a
         // namespace still on screen (search: visibleNS; composer typing:
@@ -1867,8 +1892,8 @@ const DATA = __PORTOLAN_DATA__;
   // node) is done, and keeping it active would hide parts of the selection's
   // neighborhood that don't match the leftover text.
   function clearSearch(){
-    if (!query) return;
-    query = ""; $("#search").value = "";
+    if (!query && !filters.length) return;
+    query = ""; filters = []; $("#search").value = ""; renderFilterPills();
   }
   // Pinning contracts the grid, so the clicked pod often slides away and
   // whatever lands under the STATIONARY cursor would fire mouseover —
@@ -2373,14 +2398,55 @@ const DATA = __PORTOLAN_DATA__;
       $("#wf-from").value = ""; $("#wf-to").value = ""; $("#wf-ports").value = ""; $("#wf-del").value = ""; $("#wf-err").textContent = "";
       renderWifPanel();
     }
-    $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = "";
+    $("#search").value = ""; $("#qa").value = ""; $("#qb").value = ""; query = ""; filters = []; renderFilterPills();
     inspectHome(); redraw();
   }
   $("#reset").addEventListener("click", resetView);
   $("#logo").addEventListener("click", resetView);
   $("#brandmark").addEventListener("click", resetView);
-  $("#search").addEventListener("input", function(){
-    query = this.value.trim().toLowerCase(); redraw();
+  // ---------- filter pills (multi-select) ----------
+  // Autocomplete offers namespaces AND workload ids; picking one (or pressing
+  // Enter) commits a pill, and the map shows the union of every pill's scope.
+  {
+    const fl = $("#filterlist");
+    [...nsByName.keys(), ...wlById.keys()].sort().forEach(v => {
+      const o = document.createElement("option"); o.value = v; fl.appendChild(o);
+    });
+  }
+  const isExactNode = v => nsByName.has(v) || wlById.has(v) || extById.has(v);
+  function renderFilterPills(){
+    const tf = $("#tokenfield"), input = $("#search");
+    tf.querySelectorAll(".tf-pill").forEach(p => p.remove());
+    filters.forEach(t => {
+      const pill = document.createElement("span");
+      pill.className = "tf-pill";
+      pill.innerHTML = `${esc(t)}<button class="tf-x" type="button" data-tok="${esc(t)}" aria-label="remove filter ${esc(t)}">✕</button>`;
+      tf.insertBefore(pill, input);
+    });
+  }
+  function addFilterPill(tok){
+    tok = tok.trim().toLowerCase();
+    if (tok && !filters.includes(tok)) filters.push(tok);
+    query = ""; $("#search").value = "";
+    renderFilterPills(); redraw();
+  }
+  $("#search").addEventListener("input", function(e){
+    const v = this.value.trim().toLowerCase();
+    // A datalist pick arrives as a replacement (not keystrokes) — commit it.
+    // Plain typing filters live; Enter commits whatever's typed.
+    const picked = e.inputType === "insertReplacementText" || e.inputType == null;
+    if (picked && v && isExactNode(v)) { addFilterPill(v); return; }
+    query = v; redraw();
+  });
+  $("#search").addEventListener("keydown", function(e){
+    if (e.key === "Enter" && this.value.trim()) { e.preventDefault(); addFilterPill(this.value); }
+    else if (e.key === "Backspace" && !this.value && filters.length) { filters.pop(); renderFilterPills(); redraw(); }
+  });
+  // ✕ drops a pill; clicking empty space in the field focuses the input.
+  $("#tokenfield").addEventListener("click", e => {
+    const x = e.target.closest(".tf-x");
+    if (x) { filters = filters.filter(t => t !== x.dataset.tok); renderFilterPills(); redraw(); }
+    else $("#search").focus();
   });
 
   // Click anywhere outside the interactive surfaces → back to the main view.
