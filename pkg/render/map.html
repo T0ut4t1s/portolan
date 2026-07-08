@@ -117,16 +117,12 @@
   .btn .cnt{font-family:var(--mono);font-size:.7rem;background:var(--accent-soft);color:var(--accent);
     border-radius:20px;padding:0 7px;font-weight:700;margin-left:3px;}
   .btn .cnt[hidden]{display:none;}
-  /* what-if: the co-equal "simulate" action beside the Navigate block — a tall
-     filled-accent button matching the block's height. Accent ring while the
-     panel is open; allow-GREEN while a projection is live. */
-  .wif-primary{align-self:stretch;padding:0 24px;font-size:.9rem;font-weight:600;border-radius:12px;
-    background:var(--accent);border-color:var(--accent);color:#fff;}
-  .wif-primary:hover{border-color:var(--accent);filter:brightness(1.06);}
-  .wif-primary[aria-pressed="true"]{background:var(--accent);color:#fff;box-shadow:0 0 0 3px var(--accent-soft);}
-  .wif-primary.live{background:var(--allow);border-color:var(--allow);color:#fff;}
-  .wif-primary.live[aria-pressed="true"]{background:var(--allow);color:#fff;box-shadow:0 0 0 3px var(--allow-soft);}
-  .wif-primary .cnt{background:rgba(255,255,255,.25);color:#fff;}
+  /* what-if: same visual language as the display/check buttons (surface fill,
+     accent hover, accent-soft "open" ring) — only the taller size that pairs it
+     with the Navigate block is bespoke. Green while a projection is live. */
+  .wif-primary{align-self:stretch;padding:0 24px;font-size:.9rem;font-weight:600;border-radius:12px;}
+  .wif-primary.live{background:var(--allow-soft);border-color:var(--allow);color:var(--allow);}
+  .wif-primary.live .cnt{background:var(--allow);color:#fff;}
 
   /* Display (lenses) dropdown: one home for every overlay — findings and
      unmatched are composable checkboxes here, not scattered sibling buttons. */
@@ -537,7 +533,7 @@
     <div class="insp-head">
       <div id="insp-id"><span class="ih-label">inspector</span></div>
       <label class="hoverbox" title="when off, the panel updates only on click — select a namespace or workload">
-        <input type="checkbox" id="hoverupd" checked> update on hover</label>
+        update on hover <input type="checkbox" id="hoverupd" checked></label>
     </div>
     <div id="insp-body"></div>
   </aside>
