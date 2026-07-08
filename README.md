@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/portolan.svg" alt="Portolan" width="96" height="96"></p>
+
 # Portolan
 
 **Charts of permitted passage for Cilium clusters** — visualize cross-namespace
