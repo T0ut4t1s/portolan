@@ -33,11 +33,7 @@
   body{background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.5;
     -webkit-font-smoothing:antialiased;padding:clamp(14px,2.5vw,32px);}
 
-  /* Header columns mirror .layout: brand over the stage, theme/hints centred
-     over the inspector column. */
-  header{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:center;margin-bottom:6px;}
-  @media(max-width:900px){header{grid-template-columns:1fr}}
-  .hdr-controls{display:flex;flex-direction:column;align-items:center;gap:7px;}
+  header{display:flex;align-items:center;gap:10px 18px;margin-bottom:6px;}
   /* Hints is a MODE switch: instructional prose (.guide) everywhere is on or
      off, persisted like the theme. Real tooltips (title=) are unaffected. */
   body.no-hints .guide{display:none;}
@@ -120,7 +116,7 @@
      click. Every action lives in the toolbar below. */
   .readstrip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;
     font-family:var(--mono);font-size:.73rem;color:var(--muted);
-    padding:9px 2px;margin:12px 0 2px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+    padding:9px 2px;margin:12px 0 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
   .readstrip .r b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;}
   .readstrip .r.warn b{color:var(--world);}
   .readstrip .r.bad b{color:var(--deny);}
@@ -131,10 +127,8 @@
   .btn .cnt{font-family:var(--mono);font-size:.7rem;background:var(--accent-soft);color:var(--accent);
     border-radius:20px;padding:0 7px;font-weight:700;margin-left:3px;}
   .btn .cnt[hidden]{display:none;}
-  /* what-if: same visual language as the display/check buttons (surface fill,
-     accent hover, accent-soft "open" ring) — only the taller size that pairs it
-     with the Navigate block is bespoke. Green while a projection is live. */
-  .wif-primary{align-self:stretch;padding:0 24px;font-size:.9rem;font-weight:600;border-radius:12px;}
+  /* what-if is a normal toolbar button (same as display/check), sitting beside
+     settings to the right of the Navigate block. Green while a projection is live. */
   .wif-primary.live{background:var(--allow-soft);border-color:var(--allow);color:var(--allow);}
   .wif-primary.live .cnt{background:var(--allow);color:#fff;}
 
@@ -459,27 +453,6 @@
       <p class="meta" id="meta"></p>
     </div>
   </div>
-  <div class="hdr-controls">
-    <span class="setwrap">
-      <button class="btn" id="setbtn" aria-expanded="false" aria-haspopup="true" title="settings">⚙ settings</button>
-      <div class="settingsmenu" id="settingsmenu" hidden>
-        <h5>appearance</h5>
-        <div class="setrow"><span>theme</span>
-          <span class="seg" id="theme-seg">
-            <button type="button" data-theme-choice="system">system</button>
-            <button type="button" data-theme-choice="light">light</button>
-            <button type="button" data-theme-choice="dark">dark</button>
-          </span></div>
-        <label class="setrow"><span>hints</span><input type="checkbox" id="hints" checked></label>
-        <div class="setdiv"></div>
-        <h5>map</h5>
-        <label class="setrow" title="the aggregate namespace-to-namespace arrows in the default overview"><span>overview traffic arrows</span><input type="checkbox" id="set-arrows" checked></label>
-        <label class="setrow" title="animate observed-traffic edges (also respects your OS reduced-motion setting)"><span>animations</span><input type="checkbox" id="set-anim" checked></label>
-        <div class="setdiv"></div>
-        <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
-      </div>
-    </span>
-  </div>
 </header>
 <div class="readstrip" id="stats"></div>
 <div class="warnbar" id="warnbar" hidden></div>
@@ -508,6 +481,25 @@
   <datalist id="nodelist"></datalist>
   <datalist id="filterlist"></datalist>
   <button class="btn wif-primary" id="wifbtn" aria-pressed="false" title="draft allow rules and simulate with Cilium's engine">✎ what-if<span class="cnt" hidden></span></button>
+  <span class="setwrap">
+    <button class="btn" id="setbtn" aria-expanded="false" aria-haspopup="true" title="settings">⚙ settings</button>
+    <div class="settingsmenu" id="settingsmenu" hidden>
+      <h5>appearance</h5>
+      <div class="setrow"><span>theme</span>
+        <span class="seg" id="theme-seg">
+          <button type="button" data-theme-choice="system">system</button>
+          <button type="button" data-theme-choice="light">light</button>
+          <button type="button" data-theme-choice="dark">dark</button>
+        </span></div>
+      <label class="setrow"><span>hints</span><input type="checkbox" id="hints" checked></label>
+      <div class="setdiv"></div>
+      <h5>map</h5>
+      <label class="setrow" title="the aggregate namespace-to-namespace arrows in the default overview"><span>overview traffic arrows</span><input type="checkbox" id="set-arrows" checked></label>
+      <label class="setrow" title="animate observed-traffic edges (also respects your OS reduced-motion setting)"><span>animations</span><input type="checkbox" id="set-anim" checked></label>
+      <div class="setdiv"></div>
+      <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
+    </div>
+  </span>
   <span class="hint guide" id="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
