@@ -1,0 +1,2272 @@
+{
+  "schemaVersion": "1",
+  "takenAt": "2026-07-08T17:55:54.506Z",
+  "cluster": "demo",
+  "tool": {
+    "name": "portolan",
+    "version": "v0.13.2"
+  },
+  "sources": [
+    {
+      "kind": "CiliumNetworkPolicy",
+      "status": "ok",
+      "count": 25
+    },
+    {
+      "kind": "CiliumClusterwideNetworkPolicy",
+      "status": "ok",
+      "count": 0
+    },
+    {
+      "kind": "NetworkPolicy",
+      "status": "skipped",
+      "count": 0,
+      "reason": "none present"
+    }
+  ],
+  "namespaces": [
+    {
+      "name": "ingress",
+      "labels": {
+        "kubernetes.io/metadata.name": "ingress"
+      }
+    },
+    {
+      "name": "storefront",
+      "labels": {
+        "kubernetes.io/metadata.name": "storefront"
+      }
+    },
+    {
+      "name": "catalog",
+      "labels": {
+        "kubernetes.io/metadata.name": "catalog"
+      }
+    },
+    {
+      "name": "orders",
+      "labels": {
+        "kubernetes.io/metadata.name": "orders"
+      }
+    },
+    {
+      "name": "payments",
+      "labels": {
+        "kubernetes.io/metadata.name": "payments"
+      }
+    },
+    {
+      "name": "identity",
+      "labels": {
+        "kubernetes.io/metadata.name": "identity"
+      }
+    },
+    {
+      "name": "platform",
+      "labels": {
+        "kubernetes.io/metadata.name": "platform"
+      }
+    },
+    {
+      "name": "observability",
+      "labels": {
+        "kubernetes.io/metadata.name": "observability"
+      }
+    },
+    {
+      "name": "messaging",
+      "labels": {
+        "kubernetes.io/metadata.name": "messaging"
+      }
+    },
+    {
+      "name": "kube-system",
+      "labels": {
+        "kubernetes.io/metadata.name": "kube-system"
+      }
+    },
+    {
+      "name": "sandbox",
+      "labels": {
+        "kubernetes.io/metadata.name": "sandbox"
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "namespace": "ingress",
+      "name": "gateway",
+      "kind": "Deployment",
+      "replicas": 3,
+      "labels": {
+        "app": "gateway"
+      }
+    },
+    {
+      "namespace": "storefront",
+      "name": "web",
+      "kind": "Deployment",
+      "replicas": 4,
+      "labels": {
+        "app": "web"
+      }
+    },
+    {
+      "namespace": "storefront",
+      "name": "checkout",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "checkout"
+      }
+    },
+    {
+      "namespace": "catalog",
+      "name": "catalog-api",
+      "kind": "Deployment",
+      "replicas": 3,
+      "labels": {
+        "app": "catalog-api"
+      }
+    },
+    {
+      "namespace": "catalog",
+      "name": "search",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "search"
+      }
+    },
+    {
+      "namespace": "orders",
+      "name": "orders-api",
+      "kind": "Deployment",
+      "replicas": 3,
+      "labels": {
+        "app": "orders-api"
+      }
+    },
+    {
+      "namespace": "orders",
+      "name": "order-worker",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "order-worker"
+      }
+    },
+    {
+      "namespace": "payments",
+      "name": "payments-api",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "payments-api"
+      }
+    },
+    {
+      "namespace": "identity",
+      "name": "auth",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "auth"
+      }
+    },
+    {
+      "namespace": "platform",
+      "name": "postgres",
+      "kind": "StatefulSet",
+      "replicas": 3,
+      "labels": {
+        "app": "postgres"
+      }
+    },
+    {
+      "namespace": "platform",
+      "name": "redis",
+      "kind": "StatefulSet",
+      "replicas": 1,
+      "labels": {
+        "app": "redis"
+      }
+    },
+    {
+      "namespace": "messaging",
+      "name": "rabbitmq",
+      "kind": "StatefulSet",
+      "replicas": 3,
+      "labels": {
+        "app": "rabbitmq"
+      }
+    },
+    {
+      "namespace": "observability",
+      "name": "prometheus",
+      "kind": "StatefulSet",
+      "replicas": 1,
+      "labels": {
+        "app": "prometheus"
+      }
+    },
+    {
+      "namespace": "observability",
+      "name": "grafana",
+      "kind": "Deployment",
+      "replicas": 1,
+      "labels": {
+        "app": "grafana"
+      }
+    },
+    {
+      "namespace": "kube-system",
+      "name": "coredns",
+      "kind": "Deployment",
+      "replicas": 2,
+      "labels": {
+        "app": "coredns",
+        "k8s-app": "kube-dns"
+      }
+    },
+    {
+      "namespace": "kube-system",
+      "name": "cilium",
+      "kind": "DaemonSet",
+      "replicas": 5,
+      "labels": {
+        "app": "cilium"
+      }
+    },
+    {
+      "namespace": "sandbox",
+      "name": "demo-app",
+      "kind": "Deployment",
+      "replicas": 1,
+      "labels": {
+        "app": "demo-app"
+      }
+    }
+  ],
+  "policies": [
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "ingress",
+      "name": "ingress-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "storefront",
+      "name": "storefront-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "catalog",
+      "name": "catalog-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "orders",
+      "name": "orders-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "payments",
+      "name": "payments-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "identity",
+      "name": "identity-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "platform",
+      "name": "platform-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "observability",
+      "name": "observability-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "messaging",
+      "name": "messaging-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "kube-system",
+      "name": "kube-system-default-deny",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {},
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "io.cilium.policy/default-deny": "init"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumClusterwideNetworkPolicy",
+      "name": "coredns-dns-clusterwide",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "k8s-app": "kube-dns",
+              "k8s:io.kubernetes.pod.namespace": "kube-system"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {}
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "ingress",
+      "name": "gateway-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "gateway"
+            }
+          },
+          "ingress": [
+            {
+              "fromEntities": [
+                "world"
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "443",
+                      "protocol": "TCP"
+                    },
+                    {
+                      "port": "80",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "web",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "checkout",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "storefront",
+      "name": "web-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "web"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "gateway",
+                    "k8s:io.kubernetes.pod.namespace": "ingress"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "catalog-api",
+                    "k8s:io.kubernetes.pod.namespace": "catalog"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "auth",
+                    "k8s:io.kubernetes.pod.namespace": "identity"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "storefront",
+      "name": "checkout-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "checkout"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "gateway",
+                    "k8s:io.kubernetes.pod.namespace": "ingress"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "payments-api",
+                    "k8s:io.kubernetes.pod.namespace": "payments"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8443",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "orders",
+      "name": "orders-api-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "orders-api"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "web",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "checkout",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "prometheus",
+                    "k8s:io.kubernetes.pod.namespace": "observability"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "postgres",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "redis",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "6379",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "rabbitmq",
+                    "k8s:io.kubernetes.pod.namespace": "messaging"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5672",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "payments-api",
+                    "k8s:io.kubernetes.pod.namespace": "payments"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8443",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "orders",
+      "name": "order-worker-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "order-worker"
+            }
+          },
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "rabbitmq",
+                    "k8s:io.kubernetes.pod.namespace": "messaging"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5672",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "postgres",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "catalog",
+      "name": "catalog-api-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "catalog-api"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "web",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "prometheus",
+                    "k8s:io.kubernetes.pod.namespace": "observability"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "postgres",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "search",
+                    "k8s:io.kubernetes.pod.namespace": "catalog"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9200",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "inventory",
+                    "k8s:io.kubernetes.pod.namespace": "warehouse"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "payments",
+      "name": "payments-api-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "payments-api"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "checkout",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8443",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "prometheus",
+                    "k8s:io.kubernetes.pod.namespace": "observability"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "postgres",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "identity",
+      "name": "auth-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "auth"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "web",
+                    "k8s:io.kubernetes.pod.namespace": "storefront"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "8080",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "postgres",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "redis",
+                    "k8s:io.kubernetes.pod.namespace": "platform"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "6379",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "observability",
+      "name": "prometheus-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "prometheus"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "grafana",
+                    "k8s:io.kubernetes.pod.namespace": "observability"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "catalog-api",
+                    "k8s:io.kubernetes.pod.namespace": "catalog"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "payments-api",
+                    "k8s:io.kubernetes.pod.namespace": "payments"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "observability",
+      "name": "grafana-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "grafana"
+            }
+          },
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "prometheus",
+                    "k8s:io.kubernetes.pod.namespace": "observability"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9090",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "catalog",
+      "name": "search-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "search"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "catalog-api",
+                    "k8s:io.kubernetes.pod.namespace": "catalog"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "9200",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "toEndpoints": [
+                {
+                  "matchLabels": {
+                    "k8s:io.kubernetes.pod.namespace": "kube-system",
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "53",
+                      "protocol": "UDP"
+                    },
+                    {
+                      "port": "53",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "platform",
+      "name": "postgres-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "postgres"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "order-worker",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "catalog-api",
+                    "k8s:io.kubernetes.pod.namespace": "catalog"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "payments-api",
+                    "k8s:io.kubernetes.pod.namespace": "payments"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "auth",
+                    "k8s:io.kubernetes.pod.namespace": "identity"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5432",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "platform",
+      "name": "redis-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "redis"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "6379",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "CiliumNetworkPolicy",
+      "namespace": "messaging",
+      "name": "rabbitmq-allow",
+      "apiVersion": "cilium.io/v2",
+      "rules": [
+        {
+          "endpointSelector": {
+            "matchLabels": {
+              "app": "rabbitmq"
+            }
+          },
+          "ingress": [
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "orders-api",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5672",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "fromEndpoints": [
+                {
+                  "matchLabels": {
+                    "app": "order-worker",
+                    "k8s:io.kubernetes.pod.namespace": "orders"
+                  }
+                }
+              ],
+              "toPorts": [
+                {
+                  "ports": [
+                    {
+                      "port": "5672",
+                      "protocol": "TCP"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "flows": {
+    "status": "ok",
+    "server": "hubble-relay.kube-system:80",
+    "window": "15m",
+    "from": "2026-07-08T17:40:54.506Z",
+    "to": "2026-07-08T17:55:54.506Z",
+    "oldestFlow": "2026-07-08T17:40:54.506Z",
+    "flowsSeen": 3353,
+    "skipped": 0,
+    "edges": [
+      {
+        "src": {
+          "namespace": "ingress",
+          "name": "gateway",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "storefront",
+          "name": "web",
+          "kind": "Deployment"
+        },
+        "port": "8080/TCP",
+        "verdict": "FORWARDED",
+        "count": 412,
+        "lastSeen": "2026-07-08T17:52:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "web",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "catalog",
+          "name": "catalog-api",
+          "kind": "Deployment"
+        },
+        "port": "8080/TCP",
+        "verdict": "FORWARDED",
+        "count": 388,
+        "lastSeen": "2026-07-08T17:51:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "web",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "port": "8080/TCP",
+        "verdict": "FORWARDED",
+        "count": 201,
+        "lastSeen": "2026-07-08T17:53:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "web",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "identity",
+          "name": "auth",
+          "kind": "Deployment"
+        },
+        "port": "8080/TCP",
+        "verdict": "FORWARDED",
+        "count": 156,
+        "lastSeen": "2026-07-08T17:53:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "checkout",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "port": "8080/TCP",
+        "verdict": "FORWARDED",
+        "count": 88,
+        "lastSeen": "2026-07-08T17:51:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "checkout",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "payments",
+          "name": "payments-api",
+          "kind": "Deployment"
+        },
+        "port": "8443/TCP",
+        "verdict": "FORWARDED",
+        "count": 71,
+        "lastSeen": "2026-07-08T17:53:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "platform",
+          "name": "postgres",
+          "kind": "Deployment"
+        },
+        "port": "5432/TCP",
+        "verdict": "FORWARDED",
+        "count": 640,
+        "lastSeen": "2026-07-08T17:54:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "platform",
+          "name": "redis",
+          "kind": "Deployment"
+        },
+        "port": "6379/TCP",
+        "verdict": "FORWARDED",
+        "count": 512,
+        "lastSeen": "2026-07-08T17:52:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "messaging",
+          "name": "rabbitmq",
+          "kind": "Deployment"
+        },
+        "port": "5672/TCP",
+        "verdict": "FORWARDED",
+        "count": 173,
+        "lastSeen": "2026-07-08T17:51:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "catalog",
+          "name": "catalog-api",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "platform",
+          "name": "postgres",
+          "kind": "Deployment"
+        },
+        "port": "5432/TCP",
+        "verdict": "FORWARDED",
+        "count": 455,
+        "lastSeen": "2026-07-08T17:54:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "identity",
+          "name": "auth",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "platform",
+          "name": "postgres",
+          "kind": "Deployment"
+        },
+        "port": "5432/TCP",
+        "verdict": "FORWARDED",
+        "count": 120,
+        "lastSeen": "2026-07-08T17:54:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "observability",
+          "name": "prometheus",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "orders",
+          "name": "orders-api",
+          "kind": "Deployment"
+        },
+        "port": "9090/TCP",
+        "verdict": "FORWARDED",
+        "count": 60,
+        "lastSeen": "2026-07-08T17:54:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "observability",
+          "name": "prometheus",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "payments",
+          "name": "payments-api",
+          "kind": "Deployment"
+        },
+        "port": "9090/TCP",
+        "verdict": "FORWARDED",
+        "count": 60,
+        "lastSeen": "2026-07-08T17:54:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "sandbox",
+          "name": "demo-app",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "payments",
+          "name": "payments-api",
+          "kind": "Deployment"
+        },
+        "port": "8443/TCP",
+        "verdict": "DROPPED",
+        "dropReason": "POLICY_DENIED",
+        "count": 14,
+        "lastSeen": "2026-07-08T17:53:54.506Z"
+      },
+      {
+        "src": {
+          "namespace": "storefront",
+          "name": "web",
+          "kind": "Deployment"
+        },
+        "dst": {
+          "namespace": "payments",
+          "name": "payments-api",
+          "kind": "Deployment"
+        },
+        "port": "8443/TCP",
+        "verdict": "DROPPED",
+        "dropReason": "POLICY_DENIED",
+        "count": 3,
+        "lastSeen": "2026-07-08T17:53:54.506Z"
+      }
+    ]
+  }
+}

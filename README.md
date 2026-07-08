@@ -16,6 +16,13 @@
   <img alt="Cluster access: read-only" src="https://img.shields.io/badge/cluster%20access-read--only-63678a">
 </p>
 
+<p align="center">
+  <img src="assets/overview.png" width="900"
+       alt="The Portolan map: every namespace's workloads and the cross-namespace passages between them, at a glance.">
+</p>
+
+<p align="center"><sub>Every screenshot here is of the bundled <a href="docs/demo-snapshot.json">demo snapshot</a> — a fabricated cluster. Try it yourself with <code>portolan render -i docs/demo-snapshot.json</code> — no cluster needed.</sub></p>
+
 In a cluster with hundreds of CiliumNetworkPolicies across dozens of namespaces,
 nobody holds the allow-topology in their head. Hubble shows you the traffic that
 *happened*; Portolan shows you the traffic that is *permitted* — and the gaps
@@ -75,6 +82,12 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   for an LLM agent (or a human) with read access: evidence, ready-to-run
   verification commands, benign explanations to rule out, and orders to
   verify live state before concluding anything.
+
+<p align="center">
+  <img src="assets/findings.png" width="880"
+       alt="The findings lens: the map contracts to every half-open passage and observed drop while the inspector lists them with one-click passage checks.">
+</p>
+
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
   policies added/removed/changed and the derived allow-edges that appeared or
   vanished. `--exit-code` for pipelines.
@@ -110,6 +123,17 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   **delta map**: the diff rendered visually — green passages the draft
   opens, red ones it closes, half-open and broken-live-flow badges — in
   the map's visual language, as a single self-contained file.
+
+<p align="center">
+  <img src="assets/whatif.png" width="880"
+       alt="A what-if delta map: deleting one policy closes 7 passages and breaks 6 observed live flows, from 5,304 engine-computed verdicts.">
+</p>
+
+> The delta map above is the whole point. Deleting one ordinary-looking
+> policy would close **7 passages** and **break 6 live flows** — surfaced by
+> simulating against Cilium's engine (5,304 verdicts) before anything ships.
+> That's the blast radius you want at review time, not in an incident.
+
 - **What-if panel (dashboard)** — in serve mode the map gains an
   interactive what-if: draft simplified allow rules (from, to, ports,
   sides) against live autocomplete, and the server simulates them with
@@ -153,6 +177,9 @@ in the mesh since Tuesday." No database — snapshots are immutable files.
 ## Quick start
 
 ```sh
+# No cluster handy? Render the bundled demo snapshot and open the map:
+portolan render -i docs/demo-snapshot.json -o map.html
+
 # Point at any cluster you can read (uses your kubeconfig, kubectl-style):
 portolan snapshot -o snapshot.json
 
