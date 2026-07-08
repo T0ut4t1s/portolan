@@ -38,13 +38,27 @@
   header{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:center;margin-bottom:6px;}
   @media(max-width:900px){header{grid-template-columns:1fr}}
   .hdr-controls{display:flex;flex-direction:column;align-items:center;gap:7px;}
-  /* The hints checkbox is a MODE switch: instructional prose (.guide)
-     everywhere is on or off, persisted like the theme. Real tooltips
-     (title=) are on-demand and unaffected. */
-  .hints-toggle{font-family:var(--mono);font-size:.7rem;color:var(--muted);
-    display:flex;align-items:center;gap:5px;cursor:pointer;}
-  .hints-toggle input{accent-color:var(--accent);cursor:pointer;margin:0;}
+  /* Hints is a MODE switch: instructional prose (.guide) everywhere is on or
+     off, persisted like the theme. Real tooltips (title=) are unaffected. */
   body.no-hints .guide{display:none;}
+  /* Settings dropdown: display preferences (theme, hints, map toggles). */
+  .setwrap{position:relative;}
+  .settingsmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:30;width:276px;text-align:left;
+    background:var(--surface);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow);padding:8px;}
+  .settingsmenu[hidden]{display:none;}
+  .settingsmenu h5{margin:6px 8px 3px;font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);font-weight:600;}
+  .setrow{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:7px 8px;border-radius:8px;font-size:.82rem;color:var(--ink-2);}
+  label.setrow{cursor:pointer;} label.setrow:hover{background:var(--surface-2);}
+  .setrow input[type=checkbox]{accent-color:var(--accent);margin:0;cursor:pointer;}
+  .setdiv{height:1px;background:var(--line);margin:6px 4px;}
+  .seg{display:inline-flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;}
+  .seg button{border:none;background:var(--surface);color:var(--muted);font:inherit;font-size:.7rem;padding:4px 9px;cursor:pointer;}
+  .seg button + button{border-left:1px solid var(--line-2);}
+  .seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600;}
+  .setabout{padding:7px 8px 2px;font-size:.72rem;color:var(--faint);}
+  .setabout a{color:var(--accent);text-decoration:none;}
   .titleblock{display:flex;flex-direction:column;gap:3px;}
   .meta b{color:var(--ink-2);font-weight:600;}
   .meta .stale{color:var(--world);font-weight:700;}
@@ -175,9 +189,13 @@
 
   /* Slightly translucent cards: the overview lines ghost through from the
      layer below without competing with the text. */
+  /* The whole card is a click target (focus the namespace) — cursor + a hover
+     border-lift and an accent-tinted name advertise it, the way chips do. */
   .ns{background:color-mix(in srgb, var(--surface) 72%, transparent);
-    border:1px solid var(--line);border-radius:12px;
-    padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0;}
+    border:1px solid var(--line);border-radius:12px;cursor:pointer;
+    padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:border-color .12s;}
+  .ns:hover:not(.focus){border-color:var(--line-2);}
+  .ns:hover .ns-name{color:var(--accent);}
   .ns.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
   .ns-head{display:flex;align-items:center;gap:6px;cursor:pointer;min-width:0;}
   .ns-name{font-family:var(--mono);font-size:.74rem;font-weight:600;color:var(--muted);
@@ -338,6 +356,7 @@
   .edge.dead{stroke:var(--faint);stroke-width:1.6;opacity:.55;stroke-dasharray:4 4;}
   .elabel.dead{fill:var(--faint);}
   @keyframes flowdash{to{stroke-dashoffset:-12}}
+  body.no-anim .edge{animation:none!important;} /* animations setting (off) */
   .elabel{font-family:var(--mono);font-size:10px;font-weight:600;fill:var(--muted);
     paint-order:stroke;stroke:var(--stage);stroke-width:4;stroke-linejoin:round;text-anchor:middle;}
   .elabel.hot{fill:var(--allow);font-size:11px;}
@@ -441,8 +460,25 @@
     </div>
   </div>
   <div class="hdr-controls">
-    <button class="btn" id="theme" aria-label="Toggle theme">◐ theme</button>
-    <label class="hints-toggle" title="show or hide the instructional text throughout the page">hints <input type="checkbox" id="hints" checked></label>
+    <span class="setwrap">
+      <button class="btn" id="setbtn" aria-expanded="false" aria-haspopup="true" title="settings">⚙ settings</button>
+      <div class="settingsmenu" id="settingsmenu" hidden>
+        <h5>appearance</h5>
+        <div class="setrow"><span>theme</span>
+          <span class="seg" id="theme-seg">
+            <button type="button" data-theme-choice="system">system</button>
+            <button type="button" data-theme-choice="light">light</button>
+            <button type="button" data-theme-choice="dark">dark</button>
+          </span></div>
+        <label class="setrow"><span>hints</span><input type="checkbox" id="hints" checked></label>
+        <div class="setdiv"></div>
+        <h5>map</h5>
+        <label class="setrow" title="the aggregate namespace-to-namespace arrows in the default overview"><span>overview traffic arrows</span><input type="checkbox" id="set-arrows" checked></label>
+        <label class="setrow" title="animate observed-traffic edges (also respects your OS reduced-motion setting)"><span>animations</span><input type="checkbox" id="set-anim" checked></label>
+        <div class="setdiv"></div>
+        <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
+      </div>
+    </span>
   </div>
 </header>
 <div class="readstrip" id="stats"></div>
@@ -563,11 +599,20 @@ const DATA = __PORTOLAN_DATA__;
     set(k, v){ try { localStorage.setItem(k, v); } catch { /* no persistence */ } },
   };
   const root = document.documentElement;
-  const savedTheme = store.get("portolan-theme");
-  root.dataset.theme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  $("#theme").addEventListener("click", () => {
-    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
-    store.set("portolan-theme", root.dataset.theme);
+  // Theme: system (follow OS) / light / dark, persisted. The segmented control
+  // in the settings menu reflects the active choice.
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  function applyTheme(){
+    const pref = store.get("portolan-theme") || "system";
+    root.dataset.theme = (pref === "dark" || (pref === "system" && mq.matches)) ? "dark" : "light";
+    document.querySelectorAll("#theme-seg button").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeChoice === pref)));
+  }
+  applyTheme();
+  mq.addEventListener("change", () => { if ((store.get("portolan-theme") || "system") === "system") applyTheme(); });
+  $("#theme-seg").addEventListener("click", e => {
+    const b = e.target.closest("[data-theme-choice]"); if (!b) return;
+    store.set("portolan-theme", b.dataset.themeChoice); applyTheme();
   });
 
   // ---------- hints ----------
@@ -583,6 +628,32 @@ const DATA = __PORTOLAN_DATA__;
   hintsBox.addEventListener("change", () => {
     applyHints(hintsBox.checked);
     store.set("portolan-hints", hintsBox.checked ? "on" : "off");
+  });
+
+  // ---------- settings menu ----------
+  const setmenu = $("#settingsmenu"), setbtn = $("#setbtn");
+  setbtn.addEventListener("click", () => {
+    const open = setmenu.hidden;
+    setmenu.hidden = !open; setbtn.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", e => {
+    if (!setmenu.hidden && !e.target.closest(".setwrap")) {
+      setmenu.hidden = true; setbtn.setAttribute("aria-expanded", "false");
+    }
+  });
+  // Overview traffic arrows — a display pref (front-edges lift), default on.
+  let arrowsOn = store.get("portolan-arrows") !== "off";
+  const arrowsBox = $("#set-arrows"); arrowsBox.checked = arrowsOn;
+  arrowsBox.addEventListener("change", function(){
+    arrowsOn = this.checked; store.set("portolan-arrows", arrowsOn ? "on" : "off"); redraw();
+  });
+  // Animations — flow dash-march; default on, and OS reduced-motion still wins.
+  let animOn = store.get("portolan-anim") !== "off";
+  const animBox = $("#set-anim"); animBox.checked = animOn;
+  const applyAnim = () => document.body.classList.toggle("no-anim", !animOn);
+  applyAnim();
+  animBox.addEventListener("change", function(){
+    animOn = this.checked; store.set("portolan-anim", animOn ? "on" : "off"); applyAnim();
   });
 
   // ---------- update-on-hover ----------
@@ -1383,7 +1454,7 @@ const DATA = __PORTOLAN_DATA__;
     // In the plain overview (nothing committed), lift the aggregate arrows to
     // the front so the traffic shape reads first; a committed view uses the
     // dimming state above, which already raises #edges above the cards.
-    document.body.classList.toggle("front-edges", !committed);
+    document.body.classList.toggle("front-edges", !committed && arrowsOn);
     syncLensUI();
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
@@ -1910,9 +1981,10 @@ const DATA = __PORTOLAN_DATA__;
   grid.addEventListener("click", e => {
     const chip = e.target.closest(".chip");
     if (chip) { pinned = pinned === chip.dataset.id ? null : chip.dataset.id; focusNS = null; queryPair = null; findingFilter = null; exitAudit(); clearSearch(); redraw(); return; }
-    const head = e.target.closest(".ns-head");
-    if (head) {
-      const ns = head.parentElement.dataset.ns;
+    // Anywhere else in a namespace card (not a chip) focuses that namespace.
+    const card = e.target.closest(".ns");
+    if (card) {
+      const ns = card.dataset.ns;
       focusNS = focusNS === ns ? null : ns; pinned = null; queryPair = null; findingFilter = null; exitAudit(); clearSearch(); redraw();
     }
   });
