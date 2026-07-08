@@ -47,12 +47,6 @@
   h1{font-size:clamp(1.25rem,2.4vw,1.7rem);margin:0;letter-spacing:-.02em;cursor:pointer;}
   h1 b{color:var(--accent)}
   .meta{font-family:var(--mono);font-size:.74rem;color:var(--muted);}
-  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}
-  .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;
-    padding:7px 12px;box-shadow:var(--shadow);font-size:.72rem;font-weight:600;color:var(--muted);}
-  .stat b{display:block;font-family:var(--mono);font-size:1.15rem;color:var(--ink);
-    font-variant-numeric:tabular-nums;font-weight:600;}
-
   .warnbar{background:var(--world-soft);border:1px solid var(--world);border-radius:10px;
     color:var(--ink-2);font-size:.78rem;padding:8px 12px;margin:0 0 12px;}
   .warnbar b{color:var(--world)}
@@ -63,7 +57,6 @@
   .search{flex:1 1 220px;max-width:340px;background:var(--surface);border:1px solid var(--line);
     border-radius:999px;padding:8px 15px;font:inherit;font-size:.85rem;color:var(--ink);}
   .search:focus{outline:2px solid var(--accent);outline-offset:1px;}
-  .pq{display:flex;align-items:center;gap:6px;}
   .pq-in{flex:0 1 190px;font-family:var(--mono);font-size:.76rem;}
   .pq-arrow{font-family:var(--mono);color:var(--faint);}
   .verdict{margin-top:10px;border-radius:9px;padding:9px 12px;font-size:.8rem;font-weight:600;}
@@ -84,6 +77,56 @@
   /* The hint gets its own full-width line, left-aligned — margin-left:auto
      in the flex row made its text start mid-page at the leftover space. */
   .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);flex-basis:100%;}
+
+  /* READ strip: passive counts, no interactions — facts you glance at, never
+     click. Every action lives in the toolbar below. */
+  .readstrip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;
+    font-family:var(--mono);font-size:.73rem;color:var(--muted);
+    padding:9px 2px;margin:12px 0 2px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+  .readstrip .r b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;}
+  .readstrip .r.warn b{color:var(--world);}
+  .readstrip .r.bad b{color:var(--deny);}
+  .readstrip .sep{width:1px;height:14px;background:var(--line-2);}
+
+  /* Toolbar spacer pushes the action buttons to the right of the Navigate group. */
+  .spacer{flex:1 1 auto;}
+  .tb-nav .findlabel{color:var(--faint);}
+  .caret{font-size:.6rem;opacity:.7;margin-left:1px;}
+  .btn .cnt{font-family:var(--mono);font-size:.7rem;background:var(--accent-soft);color:var(--accent);
+    border-radius:20px;padding:0 7px;font-weight:700;margin-left:3px;}
+  .btn .cnt[hidden]{display:none;}
+  /* what-if button: accent ring while the panel is open (via aria-pressed),
+     allow-GREEN while any projection is live — green is the map's draft color. */
+  #wifbtn.live{background:var(--allow-soft);border-color:var(--allow);color:var(--allow);}
+  #wifbtn.live .cnt{background:var(--allow);color:#fff;}
+
+  /* Display (lenses) dropdown: one home for every overlay — findings and
+     unmatched are composable checkboxes here, not scattered sibling buttons. */
+  .lenswrap{position:relative;}
+  .lensmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:30;width:252px;
+    background:var(--surface);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow);padding:8px;}
+  .lensmenu[hidden]{display:none;}
+  .lensmenu h5{margin:6px 8px 3px;font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);font-weight:600;}
+  .lensrow{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;cursor:pointer;
+    font-size:.82rem;color:var(--ink-2);}
+  .lensrow:hover{background:var(--surface-2);}
+  .lensrow input{accent-color:var(--accent);margin:0;flex:none;}
+  .lensrow .sw{width:9px;height:9px;border-radius:3px;flex:none;}
+  .lensrow .lr-n{margin-left:auto;font-family:var(--mono);font-size:.7rem;color:var(--muted);}
+  .sw.half{background:var(--world);} .sw.drop{background:var(--deny);} .sw.dead{background:var(--faint);}
+  .lensdiv{height:1px;background:var(--line);margin:6px 4px;}
+
+  /* Anchored inspector header: a fixed bar that survives the body's per-hover
+     redraws — home for the "update on hover" switch. */
+  .insp-head{display:flex;align-items:flex-start;gap:10px;margin:-16px -16px 12px;padding:11px 15px;
+    border-bottom:1px solid var(--line);background:var(--surface-2);border-radius:14px 14px 0 0;
+    position:sticky;top:-16px;z-index:2;}
+  .insp-head .ih-label{font-family:var(--mono);font-size:.62rem;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--faint);}
+  .hoverbox{margin-left:auto;font-family:var(--mono);font-size:.66rem;color:var(--muted);
+    display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;}
+  .hoverbox input{accent-color:var(--accent);margin:0;}
 
   .layout{display:grid;grid-template-columns:1fr minmax(240px,320px);gap:16px;align-items:start;}
   @media (max-width:900px){.layout{grid-template-columns:1fr}}
@@ -141,22 +184,11 @@
     border-left-color:var(--faint);color:var(--muted);}
   body.show-dead .ext.dead{display:inline-block;border-style:dashed;
     background:var(--surface-2);border-color:var(--line-2);color:var(--muted);}
-  .stat[data-goto]{cursor:pointer;}
-  .stat[data-goto]:hover{border-color:var(--accent);}
-  .stat.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
-  .stats{align-items:stretch;}
-  /* Findings live in their own bordered group, labeled on the border line —
-     the stats row reads as facts | findings. */
-  .findgroup{position:relative;display:flex;gap:8px;border:1px solid var(--line-2);
-    border-radius:12px;padding:9px 10px 6px;margin-left:8px;}
+  /* Group label sitting on a .ctlgroup's border line (e.g. the Navigate group). */
   .findlabel{position:absolute;top:-7px;left:10px;background:var(--bg);padding:0 6px;
     font-family:var(--mono);font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;
     color:var(--muted);line-height:1;white-space:nowrap;}
-  /* :not(.on) — the group flattens resting chips but must not swallow the
-     active chip's ring (the row's one "on" language). */
-  .findgroup .stat:not(.on){box-shadow:none;}
-  /* Bordered control groups: switches and the passage-check cluster read
-     as units, labeled on the border line like the findings group. */
+  /* Bordered control group (the Navigate cluster): label on the border line. */
   .ctlgroup{position:relative;display:flex;align-items:center;gap:6px;
     border:1px solid var(--line-2);border-radius:12px;padding:10px 10px 8px;}
   /* Reset speaks the finding chips' exact language: quiet white chip,
@@ -169,29 +201,6 @@
   .stat-reset b{color:var(--accent);display:block;transform:rotate(-90deg) scaleX(-1);}
   .stat-reset:hover{border-color:var(--accent);}
   .stat-reset:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
-
-  /* The what-if chip sits beside reset with the same geometry: value slot
-     counts the projected rules. Quiet white like its neighbors at rest;
-     accent-highlighted while the panel is open; allow-GREEN while any
-     projection is live — green is this map's "draft passage" color (red
-     would read as an alert, and a live draft is not an alarm). */
-  .stat-wif{margin-left:8px;cursor:pointer;font:inherit;font-weight:600;text-align:center;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;}
-  /* Glyph slot: a ? invites at rest (mirrors reset's ↺ above its copy); the
-     accent tone marks it as the icon. When rules are live the slot swaps to the
-     projected-rule count (green, below). */
-  .stat-wif b{color:var(--accent);}
-  /* Hover matches the finding chips: border highlight only, no invert.
-     Open = accent-soft + ring (the row's .on language); live = green. */
-  .stat-wif:hover{border-color:var(--accent);}
-  .stat-wif[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);
-    box-shadow:0 0 0 1px var(--accent);}
-  .stat-wif[aria-pressed="true"] b{color:var(--accent);}
-  .stat-wif.live{background:var(--allow-soft);border-color:var(--allow);}
-  .stat-wif.live b{color:var(--allow);}
-  .stat-wif.live:hover{border-color:var(--allow);box-shadow:0 0 0 1px var(--allow);}
-  .stat-wif.live[aria-pressed="true"]{box-shadow:0 0 0 1px var(--allow);}
-  .stat-wif:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
 
   /* What-if panel: compose simplified allow rules on the left, the what-if
      rule list + engine metrics on the right; the map below becomes the delta. */
@@ -315,12 +324,23 @@
     color:var(--faint);margin:0 0 4px;}
   .insp-title{font-family:var(--mono);font-size:1.05rem;font-weight:600;margin:0;word-break:break-all;}
   .insp-sub{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin:2px 0 0;}
+  /* Identity now lives in the anchored header; keep it from shoving the
+     hover switch off the edge. The first body group needs no top gap. */
+  #insp-id{min-width:0;flex:1;}
+  #insp-body > .rgroup:first-child,#insp-body > .half-warn:first-child{margin-top:0;}
   .half-warn{margin-top:10px;background:var(--deny-soft);border:1px solid var(--deny);
     border-radius:8px;padding:7px 10px;font-size:.76rem;color:var(--ink-2);}
   .half-warn b{color:var(--deny)}
   .rgroup{margin-top:14px;}
-  .rgroup h4{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+  /* Direction headers read as the node's two sides: ingress (allow-teal ←)
+     and egress (accent →), each with a right-aligned peer count. */
+  .rgroup h4{display:flex;align-items:baseline;gap:6px;
+    font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
     color:var(--ink-2);margin:0 0 6px;}
+  .rgroup h4 .arw{font-weight:700;}
+  .rgroup h4 .arw.in{color:var(--allow);}
+  .rgroup h4 .arw.eg{color:var(--accent);}
+  .rgroup h4 .n{margin-left:auto;color:var(--muted);font-weight:500;letter-spacing:0;text-transform:none;}
   .rule{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
     padding:6px 0;border-top:1px solid var(--line);}
   .rule .peer{font-family:var(--mono);font-size:.78rem;min-width:0;}
@@ -337,7 +357,6 @@
   .tag.half{color:var(--deny);background:var(--deny-soft);}
   .tag.obs{color:var(--allow);background:var(--allow-soft);}
   .ports.bad{color:var(--deny);background:var(--deny-soft);}
-  .stat.bad b{color:var(--deny);}
   .empty{color:var(--muted);margin-top:14px;}
 
   .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px;
@@ -382,23 +401,31 @@
     <label class="hints-toggle" title="show or hide the instructional text throughout the page"><input type="checkbox" id="hints" checked> hints</label>
   </div>
 </header>
-<div class="stats" id="stats"></div>
+<div class="readstrip" id="stats"></div>
 <div class="warnbar" id="warnbar" hidden></div>
 <div class="controls">
-  <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
-  <span class="pq ctlgroup">
-    <span class="findlabel">passage check</span>
+  <span class="ctlgroup tb-nav">
+    <span class="findlabel">navigate</span>
+    <input class="search" id="search" type="search" placeholder="filter namespaces & workloads…" aria-label="Filter">
     <input class="search pq-in" id="qa" list="nodelist" placeholder="from…" aria-label="Passage source">
     <span class="pq-arrow">→</span>
     <input class="search pq-in" id="qb" list="nodelist" placeholder="to…" aria-label="Passage destination">
-    <button class="btn" id="qgo">check</button>
+    <button class="btn" id="qgo">check passage</button>
   </span>
   <datalist id="nodelist"></datalist>
-  <span class="ctlgroup">
-    <span class="findlabel">toggles</span>
-    <button class="btn" id="audit" aria-pressed="false">audit</button>
-    <button class="btn" id="deadbtn" aria-pressed="false" hidden title="show selector references matching no live workload as phantom nodes">unmatched</button>
+  <span class="spacer"></span>
+  <button class="btn" id="wifbtn" aria-pressed="false" title="draft allow rules and simulate with Cilium's engine">✎ what-if<span class="cnt" hidden></span></button>
+  <span class="lenswrap">
+    <button class="btn" id="lensbtn" aria-expanded="false" aria-haspopup="true" title="overlays: findings, unmatched selectors">◧ display<span class="cnt" id="lenscnt" hidden></span><span class="caret">▾</span></button>
+    <div class="lensmenu" id="lensmenu" hidden>
+      <h5>findings</h5>
+      <label class="lensrow"><input type="checkbox" id="lens-half"><span class="sw half"></span> half-open passages <span class="lr-n" id="lens-half-n">0</span></label>
+      <label class="lensrow" id="lens-drop-row"><input type="checkbox" id="lens-drop"><span class="sw drop"></span> dropped in window <span class="lr-n" id="lens-drop-n">0</span></label>
+      <div class="lensdiv" id="lens-dead-div" hidden></div>
+      <label class="lensrow" id="lens-dead-row" hidden><input type="checkbox" id="lens-dead"><span class="sw dead"></span> unmatched selectors <span class="lr-n" id="lens-dead-n">0</span></label>
+    </div>
   </span>
+  <button class="btn stat-reset" id="reset" title="clear all selections and filters"><b>↺</b></button>
   <span class="hint guide" id="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
@@ -456,7 +483,14 @@
       <span class="flows-legend" hidden><i class="lk drop"></i>dropped in window</span>
     </div>
   </div>
-  <aside class="inspector" id="inspector"></aside>
+  <aside class="inspector" id="inspector">
+    <div class="insp-head">
+      <div id="insp-id"><span class="ih-label">inspector</span></div>
+      <label class="hoverbox" title="when off, the panel updates only on click — select a namespace or workload">
+        <input type="checkbox" id="hoverupd" checked> update on hover</label>
+    </div>
+    <div id="insp-body"></div>
+  </aside>
 </div>
 <footer>Generated by <span id="tool"></span> — declared policy topology (visualization-grade). For enforcement verdicts, use the <b>what-if</b> toggle (dashboard mode) or <a href="https://github.com/T0ut4t1s/portolan">portolan whatif</a>.</footer>
 
@@ -503,6 +537,23 @@ const DATA = __PORTOLAN_DATA__;
   hintsBox.addEventListener("change", () => {
     applyHints(hintsBox.checked);
     store.set("portolan-hints", hintsBox.checked ? "on" : "off");
+  });
+
+  // ---------- update-on-hover ----------
+  // The inspector peeks on hover by default. When switched off, hover stops
+  // driving the panel (and the map highlight) — only a click (workload or
+  // namespace) repopulates it. Persisted like theme/hints.
+  let updateOnHover = store.get("portolan-hover") !== "off";
+  const hoverBox = $("#hoverupd");
+  hoverBox.checked = updateOnHover;
+  hoverBox.addEventListener("change", function(){
+    updateOnHover = this.checked;
+    store.set("portolan-hover", updateOnHover ? "on" : "off");
+    // Turning it off must drop any live hover highlight (a lingering `hovered`
+    // outranks pinned in the redraw dispatch and would swallow the next click).
+    // The panel keeps its last content — the same sticky-peek it shows whenever
+    // the cursor leaves a chip.
+    if (!updateOnHover && hovered) { hovered = null; redraw(); }
   });
 
   // ---------- indexes ----------
@@ -598,47 +649,26 @@ const DATA = __PORTOLAN_DATA__;
   }
   $("#tool").textContent = DATA.tool;
   const half = DATA.edges.filter(halfOpen).length;
-  const statDefs = [
+  const dropCount = FLOWS ? FLOWS.drops.length : 0;
+  // The stats row is now a passive READ strip: facts you glance at, never
+  // click. Findings (half-open, drops) appear here as readouts; the map
+  // overlay for them lives in the Display menu. This kills the old surprise
+  // where clicking a "stat" silently filtered the board.
+  const reads = [
     [DATA.stats.namespaces, "namespaces"],
     [DATA.stats.workloads, "workloads"],
     [DATA.stats.policies, "policies"],
+    ["sep"],
     [DATA.stats.edges, "allow edges"],
     [DATA.stats.crossEdges, "cross-namespace"],
   ];
-  if (FLOWS) statDefs.push([FLOWS.observed.length, "observed edges"]);
-  // Finding chips sit apart at the far right: they are filters, not
-  // inventory — click → the map contracts to those edges (with each
-  // involved workload's neighborhood for context) and the audit panel
-  // opens scrolled to the group. Click again to release.
-  // Finding chips stay clickable even at zero — the door to the audit
-  // group shouldn't vanish when the group happens to be empty (drop counts
-  // legitimately hit 0 between collection windows).
-  const findDefs = [[half, "half-open", "", "aud-half"]];
-  if (FLOWS) findDefs.push([FLOWS.drops.length, "observed drops",
-    FLOWS.drops.length ? "bad" : "", "aud-drops"]);
-  const chipHTML = ([v,l,cls,goto]) =>
-    `<div class="stat${cls ? " " + cls : ""}"${goto ? ` data-goto="${goto}" role="button" tabindex="0"` : ""}><b>${v}</b>${l}</div>`;
-  $("#stats").innerHTML = statDefs.map(chipHTML).join("") +
-    `<div class="findgroup"><span class="findlabel">findings</span>${findDefs.map(chipHTML).join("")}</div>` +
-    `<button class="stat stat-wif" id="wifbtn" aria-pressed="false"><b>?</b>what-if</button>` +
-    `<button class="stat stat-reset" id="reset" title="clear all selections and filters"><b>↺</b>reset</button>`;
-  $("#stats").addEventListener("click", e => {
-    const s = e.target.closest(".stat[data-goto]");
-    if (!s) return;
-    const kind = s.dataset.goto === "aud-half" ? "half" : "drops";
-    if (findingFilter === kind) {
-      findingFilter = null;
-      auditMode = false; $("#audit").setAttribute("aria-pressed", "false");
-      inspectHome(); redraw();
-      return;
-    }
-    pinned = hovered = focusNS = queryPair = null;
-    // Nothing to filter to → just show the (empty) audit group as evidence.
-    findingFilter = findingEdges(kind).length ? kind : null;
-    auditMode = true; $("#audit").setAttribute("aria-pressed", "true");
-    renderAudit(); redraw();
-    document.getElementById(s.dataset.goto)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
+  if (FLOWS) reads.push([FLOWS.observed.length, "observed edges"]);
+  reads.push(["sep"], [half, "half-open", "warn"]);
+  if (FLOWS) reads.push([dropCount, "observed drops", dropCount ? "bad" : ""]);
+  $("#stats").className = "readstrip";
+  $("#stats").innerHTML = reads.map(r => r[0] === "sep"
+    ? `<span class="sep"></span>`
+    : `<span class="r${r[2] ? " " + r[2] : ""}"><b>${r[0]}</b> ${r[1]}</span>`).join("");
   if (DATA.flows && DATA.flows.status !== "ok") {
     DATA.warnings = (DATA.warnings || []).concat(
       ["flow capture failed (" + DATA.flows.reason + ") — map shows declared policy only"]);
@@ -929,8 +959,8 @@ const DATA = __PORTOLAN_DATA__;
         <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(d.s)}" data-qb="${esc(d.d)}">check</button>
         ${esc(d.s)} → ${esc(d.d)}<small>${esc(d.reason || "dropped")} ×${d.n}${d.last ? " · last " + esc(d.last.slice(11,19)) : ""}</small></span>
         <span class="ports bad">${esc(d.port || "—")}</span></div>`;
-    insp.innerHTML = `<p class="insp-kicker">audit</p>
-      <p class="insp-title">findings</p>
+    renderInsp(`<p class="insp-kicker">audit</p>
+      <p class="insp-title">findings</p>`, `
       ${FLOWS ? `<div class="rgroup"><h4 id="aud-drops">✕ drops observed in window (${drops.length})</h4>
         ${drops.map(dropItem).join("") || '<p class="empty">none — no traffic denied in the capture window</p>'}</div>` : ""}
       <div class="rgroup"><h4 id="aud-half">half-open passages (${halves.length})</h4>
@@ -941,9 +971,9 @@ const DATA = __PORTOLAN_DATA__;
         ${world.length ? `<div class="ctx"><ul>${world.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>` : '<p class="empty">none</p>'}</div>
       <div class="rgroup"><h4>selector refs matching nothing (${dead.length})</h4>
         <div class="ctx">May be intentional — completed jobs, scaled-down nodes, or future
-        pods; anything unexplained is a dead rule. Toggle <b>unmatched</b> in the
-        toolbar to see these as phantom nodes on the map.
-        <ul class="scrolllist">${dead.map(r=>`<li>${esc(r)}</li>`).join("") || "<li>none</li>"}</ul></div></div>`;
+        pods; anything unexplained is a dead rule. Tick <b>unmatched selectors</b> in the
+        <b>Display</b> menu to see these as phantom nodes on the map.
+        <ul class="scrolllist">${dead.map(r=>`<li>${esc(r)}</li>`).join("") || "<li>none</li>"}</ul></div></div>`);
   }
 
   // ---------- passage query ----------
@@ -979,8 +1009,9 @@ const DATA = __PORTOLAN_DATA__;
       dl ? `<div class="verdict bad" style="margin-top:6px">✕ ${dl.reduce((n,d)=>n+d.n,0)} drop(s) OBSERVED in window — ${esc(dl[0].reason || "denied")}</div>` :
       o ? `<div class="verdict ok" style="margin-top:6px">⇢ traffic observed: ×${o.n} in window ${o.ports.length ? "on " + o.ports.map(esc).join(" ") : ""}</div>` :
       `<div class="ctx">no traffic observed on this passage in the capture window</div>`;
-    let body = `<p class="insp-kicker">passage check</p>
+    const head = `<p class="insp-kicker">passage check</p>
       <p class="insp-title">${esc(a)} → ${esc(b)}</p>`;
+    let body = "";
     if (e && halfOpen(e)) {
       body += `<div class="verdict bad">HALF-OPEN — dropped at the receiver${dl ? " (CONFIRMED by observed drops)" : ""}</div>
         ${obsLine}
@@ -1016,7 +1047,7 @@ const DATA = __PORTOLAN_DATA__;
         <ul>${inn.slice(0,8).map(x => `<li>${esc(x.s)} ${esc(x.ports.join(","))}</li>`).join("") || "<li>nothing declared</li>"}</ul>
         The missing rule goes in whichever side's list should contain the other.</div>`;
     }
-    insp.innerHTML = body;
+    renderInsp(head, body);
   }
   function drawPair(pair){
     const [a, b] = pair;
@@ -1302,8 +1333,7 @@ const DATA = __PORTOLAN_DATA__;
     // the front so the traffic shape reads first; a committed view uses the
     // dimming state above, which already raises #edges above the cards.
     document.body.classList.toggle("front-edges", !committed);
-    document.querySelectorAll(".stat[data-goto]").forEach(s =>
-      s.classList.toggle("on", findingFilter === (s.dataset.goto === "aud-half" ? "half" : "drops")));
+    syncLensUI();
     grid.querySelectorAll(".chip").forEach(c => c.classList.remove("sel","adj"));
     rail.querySelectorAll(".ext").forEach(c => c.classList.remove("sel","adj"));
     grid.querySelectorAll(".ns").forEach(c => c.classList.remove("focus","has-active"));
@@ -1655,15 +1685,23 @@ const DATA = __PORTOLAN_DATA__;
   }
 
   // ---------- inspector ----------
-  const insp = $("#inspector");
+  // The .insp-head bar is anchored (it carries the "update on hover" switch and
+  // survives every redraw); renderInsp writes the selection's identity into its
+  // #insp-id slot and the rules/detail into #insp-body below it.
+  const insp = $("#insp-body");
+  const inspId = $("#insp-id");
+  function renderInsp(head, body){
+    inspId.innerHTML = head;
+    insp.innerHTML = body || "";
+  }
   function inspectHome(){
-    insp.innerHTML = `<p class="insp-kicker">Inspector</p>
+    renderInsp(`<p class="insp-kicker">inspector</p>
       <p class="insp-title">Select a workload</p>
-      <p class="insp-sub guide">hover · click to pin · click a namespace header to focus it</p>
+      <p class="insp-sub guide">hover · click to pin · click a namespace header to focus it</p>`, `
       <p class="empty guide">The overview shows cross-namespace allows aggregated per namespace pair.
       Dashed red = half-open: one side declared, the other missing where default-deny would drop it.
       ${FLOWS ? "Animated lines carried real traffic in the last " + esc(FLOWS.window) +
-        "; solid red lines are observed drops." : ""}</p>`;
+        "; solid red lines are observed drops." : ""}</p>`);
   }
   // Policy provenance renders as clickable names — the escape hatch from
   // resolved effects to the raw rule payloads (shown in a dismissible
@@ -1706,33 +1744,37 @@ const DATA = __PORTOLAN_DATA__;
     const es = (edgesByNode.get(id) || []).filter(e => !e.dead || showDead || ph);
     const out = es.filter(e => e.s === id), inn = es.filter(e => e.d === id);
     if (ph) {
-      insp.innerHTML = `<p class="insp-kicker">unmatched selector</p>
+      renderInsp(`<p class="insp-kicker">unmatched selector</p>
         <p class="insp-title">${esc(ph.label)}</p>
-        <p class="insp-sub">${ph.namespace ? esc(ph.namespace) + " · " : ""}matches no live workload</p>
+        <p class="insp-sub">${ph.namespace ? esc(ph.namespace) + " · " : ""}matches no live workload</p>`, `
         <div class="ctx">Declared by:<ul>${ph.policies.map(p => `<li><button class="pol" data-pol="${esc(p)}">${esc(p)}</button></li>`).join("")}</ul>
         May be intentional (scaled-down node, Job pods between runs, future
         deploy) — or a dead rule to remove.</div>
-        ${out.length ? `<div class="rgroup"><h4>→ rule would allow reaching</h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
-        ${inn.length ? `<div class="rgroup"><h4>← rule would accept from</h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}`;
+        ${inn.length ? `<div class="rgroup"><h4><span class="arw in">←</span> rule would accept from <span class="n">${inn.length}</span></h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}
+        ${out.length ? `<div class="rgroup"><h4><span class="arw eg">→</span> rule would allow reaching <span class="n">${out.length}</span></h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}`);
       return;
     }
     const halves = es.filter(halfOpen);
     const ghosts = ghostsByNode.get(id) || [];
     const drops = dropsByNode.get(id) || [];
     const wifRows = wifDraftRows(id);
-    insp.innerHTML = `<p class="insp-kicker">${wl ? "workload" : "external"}</p>
+    const plural = (n, w) => n + " " + w + (n !== 1 ? "s" : "");
+    // The body reads as the node's two-sided story: who reaches it (ingress)
+    // then what it reaches (egress) — the same direction vocabulary the
+    // half-open findings speak. Observed-only traffic and drops follow below.
+    renderInsp(`<p class="insp-kicker">${wl ? "workload" : "external"}</p>
       <p class="insp-title">${esc(wl ? wl.name : (ext?.name || id))}</p>
-      <p class="insp-sub">${wl ? esc(nodeNS(id)) + " · " + esc(wl.kind) : esc(ext?.kind || "")}</p>
+      <p class="insp-sub">${wl ? esc(nodeNS(id)) + " · " + esc(wl.kind) : esc(ext?.kind || "")}</p>`, `
       ${halves.length ? `<div class="half-warn"><b>${halves.length} half-open edge(s)</b> —
         allowed on one side only; the default-deny far side will drop this traffic.</div>` : ""}
       ${drops.length ? `<div class="half-warn"><b>${drops.length} drop(s) observed</b> —
         the datapath denied traffic touching this node inside the capture window.</div>` : ""}
       ${wifRows}
-      ${out.length ? `<div class="rgroup"><h4>→ may reach</h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
-      ${inn.length ? `<div class="rgroup"><h4>← reachable from</h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}
+      ${inn.length ? `<div class="rgroup"><h4><span class="arw in">←</span> ingress · who reaches this <span class="n">${plural(inn.length, "source")}</span></h4>${inn.map(e => ruleRow(e.s, e, "in")).join("")}</div>` : ""}
+      ${out.length ? `<div class="rgroup"><h4><span class="arw eg">→</span> egress · what this reaches <span class="n">${plural(out.length, "target")}</span></h4>${out.map(e => ruleRow(e.d, e, "out")).join("")}</div>` : ""}
       ${ghosts.length ? `<div class="rgroup"><h4>⋯ observed, undeclared</h4>${ghosts.map(o => ghostRow(id, o)).join("")}</div>` : ""}
       ${drops.length ? `<div class="rgroup"><h4>✕ observed drops</h4>${drops.map(d => dropRow(id, d)).join("")}</div>` : ""}
-      ${!out.length && !inn.length && !ghosts.length && !drops.length && !wifRows ? '<p class="empty">No edges — nothing declared for this node.</p>' : ""}`;
+      ${!out.length && !inn.length && !ghosts.length && !drops.length && !wifRows ? '<p class="empty">No edges — nothing declared for this node.</p>' : ""}`);
   }
   // wifDraftRows: the projected what-if passages touching a node, shown
   // wherever that node is inspected — a draft is part of the node's story
@@ -1781,12 +1823,12 @@ const DATA = __PORTOLAN_DATA__;
         }
       }
     }
-    insp.innerHTML = `<p class="insp-kicker">namespace</p>
+    renderInsp(`<p class="insp-kicker">namespace</p>
       <p class="insp-title">${esc(name)}</p>
       <p class="insp-sub">${ns.workloads.length} workloads · ${ns.policyCount} policies
-        ${ns.defaultDeny ? " · default-deny" : ""}</p>
+        ${ns.defaultDeny ? " · default-deny" : ""}</p>`, `
       ${wifRows}
-      <p class="empty guide">Showing every edge touching this namespace. Click the header again to unfocus.</p>`;
+      <p class="empty guide">Showing every edge touching this namespace. Click the header again to unfocus.</p>`);
   }
 
   // ---------- interactions ----------
@@ -1806,6 +1848,7 @@ const DATA = __PORTOLAN_DATA__;
   // the pod slides out from under the cursor — that fall-back to the
   // pinned view is exactly right.)
   grid.addEventListener("mousemove", e => {
+    if (!updateOnHover) return;
     const chip = e.target.closest(".chip");
     if (chip && hovered !== chip.dataset.id) { hovered = chip.dataset.id; redraw(); }
   }, { passive: true });
@@ -1824,10 +1867,10 @@ const DATA = __PORTOLAN_DATA__;
   function runQuery(){
     const a = resolveNode($("#qa").value), b = resolveNode($("#qb").value);
     if (!a || !b) {
-      insp.innerHTML = `<p class="insp-kicker">passage check</p>
-        <p class="insp-title">node not found</p>
+      renderInsp(`<p class="insp-kicker">passage check</p>
+        <p class="insp-title">node not found</p>`, `
         <p class="empty">Type a workload as <b>namespace/name</b> (autocomplete helps), or a
-        unique short name. ${!a ? "Source" : "Destination"} didn't resolve.</p>`;
+        unique short name. ${!a ? "Source" : "Destination"} didn't resolve.</p>`);
       return;
     }
     queryPair = [a, b]; pinned = null; hovered = null; focusNS = null; findingFilter = null; clearSearch(); redraw();
@@ -1836,30 +1879,69 @@ const DATA = __PORTOLAN_DATA__;
   [$("#qa"), $("#qb")].forEach(el => el.addEventListener("keydown", e => {
     if (e.key === "Enter") runQuery();
   }));
-  // The audit toggle is the combined exception view: the report in the
-  // inspector AND the map contracted to every half-open + observed drop.
-  $("#audit").addEventListener("click", function(){
-    auditMode = !auditMode; this.setAttribute("aria-pressed", String(auditMode));
-    if (auditMode) {
-      pinned = hovered = focusNS = queryPair = null;
-      findingFilter = findingEdges("audit").length ? "audit" : null;
-      renderAudit(); redraw();
-    }
-    else { findingFilter = null; inspectHome(); redraw(); }
+  // ---------- Display (lenses) menu ----------
+  // Findings and unmatched used to be a mismatched button (audit = the union
+  // of half-open + drops) plus a conditional switch. They're now uniform,
+  // composable checkboxes under one Display menu. Ticking BOTH findings IS the
+  // old "audit" combined view; either alone filters to that finding class.
+  const lensmenu = $("#lensmenu"), lensbtn = $("#lensbtn");
+  lensbtn.addEventListener("click", () => {
+    const open = lensmenu.hidden;
+    lensmenu.hidden = !open;
+    lensbtn.setAttribute("aria-expanded", String(open));
   });
-  // Unmatched-refs toggle: dormant rules become phantom chips + dashed
-  // edges, drawn where the missing workload would sit.
+  document.addEventListener("click", e => {
+    if (!lensmenu.hidden && !e.target.closest(".lenswrap")) {
+      lensmenu.hidden = true; lensbtn.setAttribute("aria-expanded", "false");
+    }
+  });
+  $("#lens-half-n").textContent = half;
+  if (FLOWS) $("#lens-drop-n").textContent = dropCount;
+  else $("#lens-drop-row").style.display = "none";
+
+  // findingFilter stays the single source of truth (null | "half" | "drops" |
+  // "audit"); the two checkboxes drive it, and syncLensUI reflects it back so
+  // programmatic clears (a pin, a reset) uncheck the boxes automatically.
+  function findingLensChanged(){
+    const h = $("#lens-half").checked, d = $("#lens-drop").checked;
+    findingFilter = h && d ? "audit" : h ? "half" : d ? "drops" : null;
+    if (findingFilter) {
+      pinned = hovered = focusNS = queryPair = null;
+      auditMode = true;
+      renderAudit();
+    } else {
+      auditMode = false;
+      if (!pinned && !queryPair && !focusNS && !wifOn) inspectHome();
+    }
+    redraw();
+  }
+  $("#lens-half").addEventListener("change", findingLensChanged);
+  $("#lens-drop").addEventListener("change", findingLensChanged);
+
+  // Unmatched-refs lens: dormant rules become phantom chips + dashed edges,
+  // drawn where the missing workload would sit. Only offered when some exist.
   if (phById.size) {
-    const db = $("#deadbtn");
-    db.hidden = false;
-    db.textContent = `unmatched (${phById.size})`;
-    db.addEventListener("click", function(){
-      showDead = !showDead;
-      this.setAttribute("aria-pressed", String(showDead));
+    $("#lens-dead-row").hidden = false;
+    $("#lens-dead-div").hidden = false;
+    $("#lens-dead-n").textContent = phById.size;
+    $("#lens-dead").addEventListener("change", function(){
+      showDead = this.checked;
       document.body.classList.toggle("show-dead", showDead);
       if (pinned && phById.has(pinned) && !showDead) pinned = null;
       redraw();
     });
+  }
+
+  // syncLensUI: reflect state → the Display checkboxes and the button badge.
+  // Called every redraw so the menu can never drift from the actual view.
+  function syncLensUI(){
+    const h = findingFilter === "half" || findingFilter === "audit";
+    const d = findingFilter === "drops" || findingFilter === "audit";
+    $("#lens-half").checked = h;
+    $("#lens-drop").checked = d;
+    $("#lens-dead").checked = showDead;
+    const n = (h ? 1 : 0) + (d ? 1 : 0) + (showDead ? 1 : 0);
+    const c = $("#lenscnt"); c.textContent = n; c.hidden = !n;
   }
   // ---------- what-if panel ----------
   // The composer captures only what decides a verdict: from, to, ports,
@@ -1868,13 +1950,13 @@ const DATA = __PORTOLAN_DATA__;
   // can never drift from the YAML.
   function renderWifInspector(){
     if (!wifSim){
-      insp.innerHTML = `<p class="insp-kicker">what-if</p>
-        <p class="insp-title">draft &amp; simulate</p>
+      renderInsp(`<p class="insp-kicker">what-if</p>
+        <p class="insp-title">draft &amp; simulate</p>`, `
         <p class="empty guide">Add an allow rule on the left of the panel. Portolan generates
         the real CiliumNetworkPolicies, simulates them with Cilium's own policy engine
         against the latest snapshot, and draws the delta — green marching passages are
         what the draft opens${FLOWS ? ", and observed drops it would fix are flagged" : ""}.
-        Nothing touches the cluster; <b>generate</b> hands you each rule's YAML for git.</p>`;
+        Nothing touches the cluster; <b>generate</b> hands you each rule's YAML for git.</p>`);
       return;
     }
     const r = wifSim.result, v = wifViewDeltas();
@@ -1906,9 +1988,9 @@ const DATA = __PORTOLAN_DATA__;
           <small>was via ${(dl.via || []).map(v => esc(polAbbr(v))).join(", ")}</small></span>
         <span class="ports bad">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
     }).join("");
-    insp.innerHTML = `<p class="insp-kicker">what-if</p>
+    renderInsp(`<p class="insp-kicker">what-if</p>
       <p class="insp-title">draft delta</p>
-      <p class="insp-sub">${(r.policyChanges || []).map(c => esc(polAbbrText(c))).join("<br>")}</p>
+      <p class="insp-sub">${(r.policyChanges || []).map(c => esc(polAbbrText(c))).join("<br>")}</p>`, `
       ${v.breaks.length ? `<div class="half-warn"><b>removal cuts live traffic</b> — flows
         observed in the capture window ride the passages being closed.</div>` : ""}
       ${hoRows ? `<div class="half-warn"><b>half-open introduced</b> — one side declared,
@@ -1919,7 +2001,7 @@ const DATA = __PORTOLAN_DATA__;
       ${wifDels().length ? `<div class="rgroup"><h4>− removed passages (${v.removed.length})</h4>
         ${remRows || '<p class="empty">none — the selected removals close no passage</p>'}</div>` : ""}
       ${fixRows ? `<div class="rgroup"><h4>✓ fixes observed drops (${v.fixes.length})</h4>${fixRows}</div>` : ""}
-      ${v.hidden ? `<p class="empty">${v.hidden} more delta(s) belong to unticked rows — tick them in the panel to project.</p>` : ""}`;
+      ${v.hidden ? `<p class="empty">${v.hidden} more delta(s) belong to unticked rows — tick them in the panel to project.</p>` : ""}`);
   }
 
   // The stats-row chip is the mode's status light: value slot counts the
@@ -1928,7 +2010,9 @@ const DATA = __PORTOLAN_DATA__;
     const n = wifSel().length;
     const chip = $("#wifbtn");
     chip.classList.toggle("live", n > 0);
-    chip.querySelector("b").textContent = n ? String(n) : "?";
+    const c = chip.querySelector(".cnt");
+    c.textContent = n ? String(n) : "";
+    c.hidden = !n;
     chip.title = n
       ? n + " what-if rule(s) projected on the map — click to open the panel"
       : "what-if: draft allow rules, simulate with Cilium's engine, project the delta on the map";
@@ -1947,7 +2031,9 @@ const DATA = __PORTOLAN_DATA__;
   // it, so the button never stays lit over a view it no longer describes (and
   // the next audit click isn't a silent no-op un-toggle).
   function exitAudit(){
-    if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+    // Callers clear findingFilter alongside this; the next redraw's syncLensUI
+    // then unchecks the Display finding boxes to match.
+    auditMode = false;
   }
   function wifAssertView(){
     pinned = queryPair = focusNS = findingFilter = null;
@@ -2190,7 +2276,7 @@ const DATA = __PORTOLAN_DATA__;
     const b = e.target.closest("[data-qa]");
     if (!b) return;
     $("#qa").value = b.dataset.qa; $("#qb").value = b.dataset.qb;
-    auditMode = false; $("#audit").setAttribute("aria-pressed","false");
+    exitAudit();
     runQuery();
   });
   // clicking a policy name opens the raw-rules overlay
@@ -2236,6 +2322,7 @@ const DATA = __PORTOLAN_DATA__;
   // Externals are first-class: hover peeks their neighborhood exactly like
   // a workload chip (mousemove — real travel only, same as the grid).
   rail.addEventListener("mousemove", e => {
+    if (!updateOnHover) return;
     const x = e.target.closest(".ext");
     if (x && hovered !== x.dataset.id) { hovered = x.dataset.id; redraw(); }
   }, { passive: true });
@@ -2245,7 +2332,7 @@ const DATA = __PORTOLAN_DATA__;
   // The logo is the home button: same full reset as the reset control.
   function resetView(){
     pinned = hovered = focusNS = queryPair = findingFilter = null;
-    if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+    if (auditMode) exitAudit();
     // Reset is total: the what-if draft goes too — rules, projections,
     // simulation, and the panel all clear back to a blank slate.
     if (wifOn) { wifOn = false; $("#wifbtn").setAttribute("aria-pressed", "false"); document.body.classList.remove("wif-on"); }
@@ -2268,10 +2355,10 @@ const DATA = __PORTOLAN_DATA__;
   document.addEventListener("click", e => {
     // header (theme) and the stats row (finding chips, reset) manage their
     // own state — a click there must not double as a click-away reset.
-    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .stats, header, .wif")) return;
+    if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .readstrip, header, .wif")) return;
     if (pinned || focusNS || queryPair || auditMode || findingFilter) {
       pinned = focusNS = queryPair = findingFilter = null;
-      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+      if (auditMode) exitAudit();
       inspectHome(); redraw();
     }
   });
@@ -2279,7 +2366,7 @@ const DATA = __PORTOLAN_DATA__;
     if (e.key === "Escape" && !polmodal.hidden) { polmodal.hidden = true; return; }
     if (e.key === "Escape" && (pinned || focusNS || queryPair || auditMode || findingFilter)) {
       pinned = focusNS = queryPair = findingFilter = null;
-      if (auditMode) { auditMode = false; $("#audit").setAttribute("aria-pressed", "false"); }
+      if (auditMode) exitAudit();
       inspectHome(); redraw();
     }
   });
