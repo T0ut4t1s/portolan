@@ -16,11 +16,6 @@
   <img alt="Cluster access: read-only" src="https://img.shields.io/badge/cluster%20access-read--only-63678a">
 </p>
 
-<p align="center">
-  <img src="assets/overview.png" width="900"
-       alt="The Portolan map: every namespace's workloads and the cross-namespace passages between them, aggregated at a glance.">
-</p>
-
 In a cluster with hundreds of CiliumNetworkPolicies across dozens of namespaces,
 nobody holds the allow-topology in their head. Hubble shows you the traffic that
 *happened*; Portolan shows you the traffic that is *permitted* — and the gaps
@@ -80,12 +75,6 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   for an LLM agent (or a human) with read access: evidence, ready-to-run
   verification commands, benign explanations to rule out, and orders to
   verify live state before concluding anything.
-
-<p align="center">
-  <img src="assets/findings.png" width="880"
-       alt="The findings lens: the map contracts to every half-open passage while the inspector lists them with one-click passage checks.">
-</p>
-
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
   policies added/removed/changed and the derived allow-edges that appeared or
   vanished. `--exit-code` for pipelines.
@@ -130,17 +119,6 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
   CiliumNetworkPolicy YAML that was simulated — one builder feeds both,
   so the preview cannot drift from the output. Projections persist as an
   overlay while you explore.
-
-<p align="center">
-  <img src="assets/whatif.png" width="880"
-       alt="What-if in the dashboard: one drafted allow rule, simulated by Cilium's engine — it heals a half-open but breaks five observed live flows and closes fourteen passages.">
-</p>
-
-> The screenshot above is the whole point: a naive "just add an allow rule"
-> looks harmless, but simulating it against the real engine shows it would
-> **break five live flows** and close fourteen passages — because adding any
-> ingress rule flips the target out of its broad default. That's the blast
-> radius you want to see at review time, not in an incident.
 
 ## What it deliberately does not do
 
