@@ -97,8 +97,10 @@
   .readstrip .r.bad b{color:var(--deny);}
   .readstrip .sep{width:1px;height:14px;background:var(--line-2);}
 
-  /* Toolbar spacer pushes the action buttons to the right of the Navigate group. */
-  .spacer{flex:1 1 auto;}
+  /* Actions (what-if / display / reset) sit left, contiguous with the Navigate
+     group — a small extra gap sets them apart without floating them to the far
+     right (where they orphaned from the panel they open on wide screens). */
+  #wifbtn{margin-left:6px;}
   .tb-nav .findlabel{color:var(--faint);}
   .caret{font-size:.6rem;opacity:.7;margin-left:1px;}
   .btn .cnt{font-family:var(--mono);font-size:.7rem;background:var(--accent-soft);color:var(--accent);
@@ -167,8 +169,12 @@
   .ns-head{display:flex;align-items:center;gap:6px;cursor:pointer;min-width:0;}
   .ns-name{font-family:var(--mono);font-size:.74rem;font-weight:600;color:var(--muted);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
-  .deny{font-family:var(--mono);font-size:.56rem;letter-spacing:.05em;text-transform:uppercase;
-    color:var(--deny);background:var(--deny-soft);border-radius:5px;padding:2px 5px;font-weight:700;flex:none;}
+  /* Badge the ANOMALY, not the norm: default-deny is the desired baseline (most
+     namespaces have it — marking them all would be red noise that also collides
+     with the findings colour). Flag only the exposed namespaces — no default-deny,
+     traffic allowed in by default — in caution amber. */
+  .nodeny{font-family:var(--mono);font-size:.56rem;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--world);background:var(--world-soft);border-radius:5px;padding:2px 5px;font-weight:700;flex:none;}
   .chips{display:flex;flex-direction:column;gap:6px;}
   .chip{font-family:var(--mono);text-align:left;cursor:pointer;
     background:color-mix(in srgb, var(--surface-2) 86%, transparent);
@@ -331,7 +337,7 @@
   .rule[data-es]:hover{background:color-mix(in srgb, var(--allow-soft) 55%, transparent);}
   .insp-kicker{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
     color:var(--faint);margin:0 0 4px;}
-  .insp-title{font-family:var(--mono);font-size:1.05rem;font-weight:600;margin:0;word-break:break-all;}
+  .insp-title{font-family:var(--mono);font-size:1.05rem;font-weight:600;margin:0;overflow-wrap:anywhere;}
   .insp-sub{font-family:var(--mono);font-size:.74rem;color:var(--muted);margin:2px 0 0;}
   /* Identity now lives in the anchored header; keep it from shoving the
      hover switch off the edge. The first body group needs no top gap. */
@@ -438,7 +444,6 @@
     <button class="btn" id="qgo">check passage</button>
   </span>
   <datalist id="nodelist"></datalist>
-  <span class="spacer"></span>
   <button class="btn" id="wifbtn" aria-pressed="false" title="draft allow rules and simulate with Cilium's engine">✎ what-if<span class="cnt" hidden></span></button>
   <span class="lenswrap">
     <button class="btn" id="lensbtn" aria-expanded="false" aria-haspopup="true" title="overlays: findings, unmatched selectors">◧ display<span class="cnt" id="lenscnt" hidden></span><span class="caret">▾</span></button>
@@ -724,7 +729,7 @@ const DATA = __PORTOLAN_DATA__;
     card.className = "ns"; card.dataset.ns = ns.name;
     card.innerHTML = `<div class="ns-head" role="button" tabindex="0">
         <span class="ns-name">${esc(ns.name)}</span>
-        ${ns.defaultDeny ? '<span class="deny">deny all</span>' : ""}
+        ${!ns.defaultDeny && ns.workloads.length ? '<span class="nodeny" title="no default-deny policy — traffic is allowed into this namespace by default">no deny</span>' : ""}
       </div><div class="chips"></div>`;
     const chips = card.querySelector(".chips");
     ns.workloads.forEach(w => {
@@ -1722,7 +1727,7 @@ const DATA = __PORTOLAN_DATA__;
   function inspectHome(){
     renderInsp(`<p class="insp-kicker">inspector</p>
       <p class="insp-title">Select a workload</p>
-      <p class="insp-sub guide">hover · click to pin · click a namespace header to focus it</p>`, `
+      <p class="insp-sub">hover · click to pin · click a namespace header to focus it</p>`, `
       <p class="empty guide">The overview shows cross-namespace allows aggregated per namespace pair.
       Dashed red = half-open: one side declared, the other missing where default-deny would drop it.
       ${FLOWS ? "Animated lines carried real traffic in the last " + esc(FLOWS.window) +
@@ -1850,8 +1855,9 @@ const DATA = __PORTOLAN_DATA__;
     }
     renderInsp(`<p class="insp-kicker">namespace</p>
       <p class="insp-title">${esc(name)}</p>
-      <p class="insp-sub">${ns.workloads.length} workloads · ${ns.policyCount} policies
-        ${ns.defaultDeny ? " · default-deny" : ""}</p>`, `
+      <p class="insp-sub">${ns.workloads.length} workloads · ${ns.policyCount} policies${ns.defaultDeny
+        ? " · default-deny"
+        : (ns.workloads.length ? ' · <b style="color:var(--world)">no default-deny</b>' : "")}</p>`, `
       ${wifRows}
       <p class="empty guide">Showing every edge touching this namespace. Click the header again to unfocus.</p>`);
   }
