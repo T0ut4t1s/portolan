@@ -16,12 +16,14 @@
   <img alt="Cluster access: read-only" src="https://img.shields.io/badge/cluster%20access-read--only-63678a">
 </p>
 
-<p align="center">
-  <img src="assets/overview.png" width="900"
-       alt="The Portolan map: every namespace's workloads and the cross-namespace passages between them, at a glance.">
-</p>
+<table>
+<tr>
+<td width="50%"><img alt="Portolan network policy map — light theme" src="assets/overview-light.png"></td>
+<td width="50%"><img alt="Portolan network policy map — dark theme" src="assets/overview-dark.png"></td>
+</tr>
+</table>
 
-<p align="center"><sub>Every screenshot here is of the bundled <a href="docs/demo-snapshot.json">demo snapshot</a> — a fabricated cluster. Try it yourself with <code>portolan render -i docs/demo-snapshot.json</code> — no cluster needed.</sub></p>
+<p align="center"><sub>The same demo cluster, <b>light and dark</b> — Portolan is theme-aware. Every screenshot here is of the bundled <a href="docs/demo-snapshot.json">demo snapshot</a>, a fabricated cluster: try it with <code>portolan render -i docs/demo-snapshot.json</code> — no cluster needed.</sub></p>
 
 In a cluster with hundreds of CiliumNetworkPolicies across dozens of namespaces,
 nobody holds the allow-topology in their head. Hubble shows you the traffic that
@@ -85,7 +87,7 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
 
 <p align="center">
   <img src="assets/findings.png" width="880"
-       alt="The findings lens: the map contracts to every half-open passage and observed drop while the inspector lists them with one-click passage checks.">
+       alt="The Audit lens: the map contracts to every half-open passage and observed drop while the inspector lists them with one-click passage checks.">
 </p>
 
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
