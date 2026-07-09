@@ -467,7 +467,7 @@
     <input class="search pq-in" id="qb" list="nodelist" placeholder="to…" aria-label="Passage destination">
     <button class="btn" id="qgo" title="check whether one workload may reach another">check</button>
     <span class="lenswrap">
-    <button class="btn" id="lensbtn" aria-expanded="false" aria-haspopup="true" title="overlays: findings, unmatched selectors">◧ display<span class="cnt" id="lenscnt" hidden></span><span class="caret">▾</span></button>
+    <button class="btn" id="lensbtn" aria-expanded="false" aria-haspopup="true" title="audit findings: half-open passages, observed drops, unmatched selectors">audit<span class="cnt" id="lenscnt" hidden></span><span class="caret">▾</span></button>
     <div class="lensmenu" id="lensmenu" hidden>
       <h5>findings</h5>
       <label class="lensrow"><input type="checkbox" id="lens-half"><span class="sw half"></span> half-open passages <span class="lr-n" id="lens-half-n">0</span></label>
@@ -1085,7 +1085,7 @@ const DATA = __PORTOLAN_DATA__;
       <div class="rgroup"><h4>selector refs matching nothing (${dead.length})</h4>
         <div class="ctx">May be intentional — completed jobs, scaled-down nodes, or future
         pods; anything unexplained is a dead rule. Tick <b>unmatched selectors</b> in the
-        <b>Display</b> menu to see these as phantom nodes on the map.
+        <b>Audit</b> menu to see these as phantom nodes on the map.
         <ul class="scrolllist">${dead.map(r=>`<li>${esc(r)}</li>`).join("") || "<li>none</li>"}</ul></div></div>`);
   }
 

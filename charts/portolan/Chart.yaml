@@ -5,8 +5,8 @@ description: >-
   read-only dashboard rendering the declared allow-topology, half-open
   passage findings, and an LLM investigation brief.
 type: application
-version: 0.15.1
-appVersion: "0.15.1"
+version: 0.15.2
+appVersion: "0.15.2"
 home: https://github.com/T0ut4t1s/portolan
 sources:
   - https://github.com/T0ut4t1s/portolan
