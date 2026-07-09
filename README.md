@@ -223,6 +223,62 @@ Early but working: `snapshot`, `render`, `audit`, `diff`, `serve`, and
 `whatif` function today. The snapshot schema is versioned; breaking changes
 bump the version.
 
+## Roadmap
+
+Where Portolan is headed — shaped by two commitments that won't change: it stays
+**read-only**, and every verdict comes from **Cilium's own engine**, never a
+reimplementation or a guess.
+
+### Trustworthy observation
+
+- **Continuous flow accumulation** *(planned)* — today's flow overlay is a single
+  point-in-time read of Hubble's ring buffer, which often holds far less than the
+  window you asked for. Serve mode will instead *stream* and accumulate observed
+  edges into a rolling store, so "observed" reflects a real 24h/7d window —
+  periodic and rare traffic included. Robust half-open and drop detection depends
+  on this.
+
+### Access
+
+- **Forward-auth support** *(planned)* — first-class support for running behind an
+  existing OIDC proxy (oauth2-proxy, Authentik) by trusting an auth header. The
+  dashboard renders, in effect, a cluster attack map; it should be gated.
+- **Native OIDC** *(exploring)* — self-contained login for standalone deployments,
+  no proxy required.
+
+### From map to assistant — agent-ready, not "AI inside"
+
+Portolan will **not** embed an LLM or call one on your behalf. Instead it produces
+the perfect *input* for whatever model you already use, and is the deterministic
+*oracle* that model's output is checked against. Your agent stays yours; Portolan
+stays a read-only instrument.
+
+- **LLM-ready cluster brief** *(planned)* — enrich `portolan audit --brief` into a
+  complete network report: topology, observed flows, findings, ready-to-run
+  verification commands, and a "what to fix" scaffold. Paste it into any LLM for
+  policy advice — greenfield lockdown, or hardening existing rules.
+- **Agent tooling (MCP server)** *(exploring)* — expose `snapshot`, `audit`,
+  `brief`, and **`whatif` verification** as tools an agent (Claude, Codex, …) can
+  drive in your own harness. The loop that makes it trustworthy — *the model drafts
+  a policy; Cilium's engine proves it closes findings without breaking live
+  traffic* — is the part no LLM can do alone. Output is always YAML for your GitOps
+  pipeline; nothing is ever applied.
+
+### Reach
+
+- **Beyond Cilium** *(exploring)* — the snapshot schema is already CNI-agnostic
+  (open-ended policy kinds + a pluggable evaluator). Native `NetworkPolicy` (and
+  Calico) support would open Portolan to any Kubernetes cluster.
+- **CI/CD integration** *(planned)* — `audit --fail-on-findings` and
+  `whatif --fail-on-break` already gate pipelines; package them as a GitHub Action
+  and a GitLab template so policy-drift and blast-radius checks drop in.
+
+Smaller near-term polish: clearer wording for the *unmatched selectors* audit lens,
+and an interactive capture-window control in Settings.
+
+Have a use case that isn't here? Open an issue — the schema and the evaluator
+interface are designed to be extended, not rewritten.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE). Deploying and using Portolan carries no
