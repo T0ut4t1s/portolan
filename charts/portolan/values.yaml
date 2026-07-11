@@ -21,18 +21,36 @@ flows:
   server: "hubble-relay.kube-system.svc.cluster.local:80"
 
 # Authentication (opt-in). Default "none" serves the dashboard open — fine
-# behind a trusted network or an external forward-auth proxy. Set to "local"
-# to require sign-in with a username/password. Credentials never live in this
-# file or the chart: point existingSecret at a Secret you create out-of-band
-# holding two keys:
-#   session-key : a 32-byte key (base64 or hex) — signs the session cookie
-#   users       : htpasswd-style "username:bcrypthash" lines, one per user
-# Generate a hash with:  portolan hashpw <username>
-# Generate a key with:   head -c32 /dev/urandom | base64
+# behind a trusted network or an external forward-auth proxy. Set mode to
+# "local" to require username/password sign-in (stateless signed-cookie
+# sessions; no database).
+#
+# Turning it on is two steps — this file holds only NON-secret config; the
+# credentials go in a Kubernetes Secret you create out-of-band (never in git):
+#
+#   1. Create the Secret with two keys:
+#        session-key : a 32-byte key (base64 or hex) that signs the cookie
+#        users       : htpasswd-style "username:bcrypthash" lines, one per user
+#
+#      # one user hash per line; the command prints "alice:$2a$10$..."
+#      portolan hashpw alice >> users
+#      kubectl create secret generic portolan-auth \
+#        --from-literal=session-key="$(head -c32 /dev/urandom | base64)" \
+#        --from-file=users=./users
+#
+#   2. Set the values below. The chart wires the env/mount from the Secret for
+#      you — you do NOT set PORTOLAN_AUTH_* env vars by hand:
+#
+#      auth:
+#        mode: local
+#        existingSecret: portolan-auth
+#
+# Rotating session-key invalidates every live session at once (stateless
+# cookies have no server-side revocation).
 auth:
   mode: none          # none | local
   sessionTTL: 12h
-  existingSecret: ""  # required when mode=local
+  existingSecret: ""  # name of the Secret above; required when mode=local
 
 service:
   port: 8080
