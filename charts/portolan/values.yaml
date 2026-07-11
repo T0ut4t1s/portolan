@@ -20,6 +20,20 @@ flows:
   window: ""
   server: "hubble-relay.kube-system.svc.cluster.local:80"
 
+# Authentication (opt-in). Default "none" serves the dashboard open — fine
+# behind a trusted network or an external forward-auth proxy. Set to "local"
+# to require sign-in with a username/password. Credentials never live in this
+# file or the chart: point existingSecret at a Secret you create out-of-band
+# holding two keys:
+#   session-key : a 32-byte key (base64 or hex) — signs the session cookie
+#   users       : htpasswd-style "username:bcrypthash" lines, one per user
+# Generate a hash with:  portolan hashpw <username>
+# Generate a key with:   head -c32 /dev/urandom | base64
+auth:
+  mode: none          # none | local
+  sessionTTL: 12h
+  existingSecret: ""  # required when mode=local
+
 service:
   port: 8080
 

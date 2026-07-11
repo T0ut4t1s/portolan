@@ -217,6 +217,50 @@ portolan serve --interval 15m --data /data
 
 A Helm chart for the in-cluster dashboard lives in [`charts/portolan`](charts/portolan).
 
+## Authentication
+
+The dashboard renders, in effect, a cluster attack map — it should not be served
+open on an untrusted network. `serve` supports opt-in sign-in; it defaults to
+`none` (open) so nothing changes for trusted-network or proxy-gated setups.
+
+**Local login** requires a username and password before any route except
+`/healthz` and the login page. Sessions are a stateless, signed-and-encrypted
+cookie (AES-256-GCM) — no server-side session store, no database. Set it up in
+three steps:
+
+```bash
+# 1. A 32-byte key that signs the session cookie:
+head -c32 /dev/urandom | base64
+
+# 2. One line per user (bcrypt-hashed; the password is read from stdin):
+portolan hashpw alice           # -> alice:$2a$10$...
+
+# 3. Run with both. The key/users can also come from
+#    PORTOLAN_AUTH_SESSION_KEY and PORTOLAN_AUTH_USERS_FILE:
+portolan serve --auth-mode local \
+  --auth-session-key "$KEY" --auth-users-file ./users
+```
+
+On the Helm chart, create a Secret holding `session-key` and `users`, then point
+the release at it — credentials never live in values or the chart:
+
+```bash
+kubectl create secret generic portolan-auth \
+  --from-literal=session-key="$(head -c32 /dev/urandom | base64)" \
+  --from-file=users=./users
+helm upgrade --install portolan charts/portolan \
+  --set auth.mode=local --set auth.existingSecret=portolan-auth
+```
+
+Misconfiguration **fails closed**: local mode without a key or users file exits
+before the server binds, so a half-configured deploy never serves open. Because
+sessions are stateless there is no server-side revocation — sign-out clears the
+cookie, and rotating the session key invalidates every issued session at once.
+
+> Native **OIDC** (self-contained login against Keycloak/Authentik and other
+> providers) and **forward-auth** header trust are on the [roadmap](#access);
+> the session layer above is shared with both.
+
 ## Status
 
 Early but working: `snapshot`, `render`, `audit`, `diff`, `serve`, and
@@ -240,11 +284,13 @@ reimplementation or a guess.
 
 ### Access
 
-- **Forward-auth support** *(planned)* — first-class support for running behind an
-  existing OIDC proxy (oauth2-proxy, Authentik) by trusting an auth header. The
-  dashboard renders, in effect, a cluster attack map; it should be gated.
-- **Native OIDC** *(exploring)* — self-contained login for standalone deployments,
-  no proxy required.
+- **Local login** *(available)* — username/password sign-in with stateless
+  signed-cookie sessions, no database. See [Authentication](#authentication).
+- **Native OIDC** *(planned)* — self-contained login against Keycloak, Authentik,
+  and other providers for standalone deployments, no proxy required. Reuses the
+  session layer that local login already ships.
+- **Forward-auth support** *(exploring)* — first-class support for running behind
+  an existing OIDC proxy (oauth2-proxy, Authentik) by trusting an auth header.
 
 ### From map to assistant — agent-ready, not "AI inside"
 

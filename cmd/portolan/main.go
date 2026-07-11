@@ -49,6 +49,8 @@ func main() {
 		err = cmdWhatif(os.Args[2:])
 	case "serve":
 		err = cmdServe(ctx, os.Args[2:])
+	case "hashpw":
+		err = cmdHashpw(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -74,6 +76,7 @@ Commands:
   diff       compare two snapshots (policies and derived edges)
   whatif     blast radius of a draft policy change (cilium engine verdicts)
   serve      in-cluster dashboard (collects on an interval, serves the map)
+  hashpw     print a username:bcrypt line for the serve --auth-users-file
   version    print version
 
 Run 'portolan <command> -h' for that command's flags.

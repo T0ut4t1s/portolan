@@ -53,9 +53,23 @@ spec:
             - --flows={{ .Values.flows.window }}
             - --hubble-server={{ .Values.flows.server }}
             {{- end }}
+            {{- if eq .Values.auth.mode "local" }}
+            - --auth-users-file=/etc/portolan/auth/users
+            - --auth-session-ttl={{ .Values.auth.sessionTTL }}
+            {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
+          {{- if eq .Values.auth.mode "local" }}
+          env:
+            - name: PORTOLAN_AUTH_MODE
+              value: local
+            - name: PORTOLAN_AUTH_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "portolan: auth.existingSecret is required when auth.mode=local" .Values.auth.existingSecret }}
+                  key: session-key
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -79,6 +93,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if eq .Values.auth.mode "local" }}
+            - name: auth-users
+              mountPath: /etc/portolan/auth
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -87,6 +106,14 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if eq .Values.auth.mode "local" }}
+        - name: auth-users
+          secret:
+            secretName: {{ .Values.auth.existingSecret }}
+            items:
+              - key: users
+                path: users
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

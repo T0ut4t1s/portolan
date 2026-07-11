@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/T0ut4t1s/portolan/pkg/auth"
 	"github.com/T0ut4t1s/portolan/pkg/graph"
 	"github.com/T0ut4t1s/portolan/pkg/render"
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
@@ -43,6 +44,44 @@ type server struct {
 	whatifMu sync.Mutex
 }
 
+// envOr returns environment variable k if set, otherwise def.
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+// buildAuth resolves the auth flags/env into an Authenticator, failing closed
+// on any misconfiguration (mode none returns a pass-through).
+func buildAuth(mode, sessionKey, usersFile string, ttl time.Duration, insecure bool) (*auth.Authenticator, error) {
+	cfg := auth.Config{Mode: auth.Mode(mode), SessionTTL: ttl, Insecure: insecure}
+	if cfg.Mode == auth.ModeLocal {
+		if sessionKey == "" {
+			return nil, errors.New("auth: local mode requires --auth-session-key (or PORTOLAN_AUTH_SESSION_KEY)")
+		}
+		key, err := auth.DecodeKey(sessionKey)
+		if err != nil {
+			return nil, fmt.Errorf("auth: %w", err)
+		}
+		cfg.SessionKey = key
+		if usersFile == "" {
+			return nil, errors.New("auth: local mode requires --auth-users-file (or PORTOLAN_AUTH_USERS_FILE)")
+		}
+		f, err := os.Open(usersFile)
+		if err != nil {
+			return nil, fmt.Errorf("auth: opening users file: %w", err)
+		}
+		defer f.Close()
+		users, err := auth.LoadUsers(f)
+		if err != nil {
+			return nil, fmt.Errorf("auth: users file: %w", err)
+		}
+		cfg.Users = users
+	}
+	return auth.New(cfg)
+}
+
 func cmdServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
@@ -54,7 +93,22 @@ func cmdServe(ctx context.Context, args []string) error {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
 	flowWindow := fs.Duration("flows", 0, "capture Hubble flow observations over this look-back window each cycle, e.g. 15m (0: off)")
 	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
+	// Auth (opt-in; default none). Flags default from env so secrets can be
+	// injected as env vars in Kubernetes without appearing on the command line.
+	authMode := fs.String("auth-mode", envOr("PORTOLAN_AUTH_MODE", "none"), "authentication: none | local")
+	authSessionKey := fs.String("auth-session-key", os.Getenv("PORTOLAN_AUTH_SESSION_KEY"), "32-byte session key (base64 or hex); required when auth is enabled")
+	authUsersFile := fs.String("auth-users-file", os.Getenv("PORTOLAN_AUTH_USERS_FILE"), "htpasswd-style users file (username:bcrypthash per line) for local auth")
+	authSessionTTL := fs.Duration("auth-session-ttl", 12*time.Hour, "session lifetime")
+	authInsecure := fs.Bool("auth-cookie-insecure", false, "drop the Secure cookie flag (plain-HTTP testing only)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// Build the authenticator up front so a misconfiguration fails closed
+	// before the server ever binds — a half-configured auth must never serve
+	// the map open.
+	authn, err := buildAuth(*authMode, *authSessionKey, *authUsersFile, *authSessionTTL, *authInsecure)
+	if err != nil {
 		return err
 	}
 
@@ -196,8 +250,11 @@ func cmdServe(ctx context.Context, args []string) error {
 		mux.HandleFunc("GET /snapshots/", historyHandler(*dataDir))
 	}
 	mux.HandleFunc("POST /api/whatif", s.whatifHandler)
+	authn.Register(mux) // /login, /logout (no-op in mode none)
 
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// The gate wraps every route: /healthz and the auth endpoints stay public,
+	// everything else requires a valid session.
+	srv := &http.Server{Addr: *addr, Handler: authn.Middleware(mux), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -205,6 +262,9 @@ func cmdServe(ctx context.Context, args []string) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 	fmt.Fprintf(os.Stderr, "serving on %s (interval %s)\n", *addr, *interval)
+	if authn.Enabled() {
+		fmt.Fprintf(os.Stderr, "auth: %s mode enabled\n", *authMode)
+	}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
