@@ -44,8 +44,8 @@ func okHandler() http.Handler {
 func TestNewFailsClosed(t *testing.T) {
 	cases := []Config{
 		{Mode: ModeLocal, SessionKey: make([]byte, 16), Users: map[string]string{"a": "$2a$x"}}, // short key
-		{Mode: ModeLocal, SessionKey: make([]byte, 32)},                                          // no users
-		{Mode: "bogus", SessionKey: make([]byte, 32), Users: map[string]string{"a": "$2a$x"}},    // bad mode
+		{Mode: ModeLocal, SessionKey: make([]byte, 32)},                                         // no users
+		{Mode: "bogus", SessionKey: make([]byte, 32), Users: map[string]string{"a": "$2a$x"}},   // bad mode
 	}
 	for i, c := range cases {
 		if _, err := New(c); err == nil {
