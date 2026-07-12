@@ -265,15 +265,19 @@ is the relying party itself.
 ```bash
 kubectl create secret generic portolan-auth \
   --from-literal=session-key="$(head -c32 /dev/urandom | base64)" \
-  --from-literal=oidc-client-secret="<from your provider>"
+  --from-literal=client_id="portolan" \
+  --from-literal=client_secret="<from your provider>"
 
 helm upgrade --install portolan charts/portolan \
   --set auth.mode=oidc --set auth.existingSecret=portolan-auth \
   --set auth.oidc.issuer=https://sso.example.com/application/o/portolan/ \
-  --set auth.oidc.clientID=portolan \
   --set auth.oidc.redirectURL=https://portolan.example.com/auth/callback \
   --set 'auth.oidc.allowedGroups={portolan-viewers}'
 ```
+
+The client id is not itself a secret, but it sits in the Secret beside the client
+secret so the client's identity stays whole — one place to read it, one place to
+rotate it. Set `auth.oidc.clientID` to keep it in values instead.
 
 **Authenticating is not authorizing.** Holding an account at your IdP is not by
 itself a reason to be handed a map of the cluster's network policy, so Portolan

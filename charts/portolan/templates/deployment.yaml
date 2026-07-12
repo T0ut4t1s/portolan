@@ -62,8 +62,10 @@ spec:
             {{- if eq .Values.auth.mode "oidc" }}
             {{- with .Values.auth.oidc }}
             - --auth-oidc-issuer={{ required "portolan: auth.oidc.issuer is required when auth.mode=oidc" .issuer }}
-            - --auth-oidc-client-id={{ required "portolan: auth.oidc.clientID is required when auth.mode=oidc" .clientID }}
             - --auth-oidc-redirect-url={{ required "portolan: auth.oidc.redirectURL is required when auth.mode=oidc" .redirectURL }}
+            {{- with .clientID }}
+            - --auth-oidc-client-id={{ . }}
+            {{- end }}
             {{- with .backchannelURL }}
             - --auth-oidc-backchannel-url={{ . }}
             {{- end }}
@@ -102,11 +104,20 @@ spec:
                   name: {{ required "portolan: auth.existingSecret is required when auth is enabled" .Values.auth.existingSecret }}
                   key: session-key
             {{- if eq .Values.auth.mode "oidc" }}
+            {{- if not .Values.auth.oidc.clientID }}
+            # Not set in values: the client's identity lives whole in the Secret,
+            # id beside secret, rather than split across two places that can drift.
+            - name: PORTOLAN_AUTH_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: client_id
+            {{- end }}
             - name: PORTOLAN_AUTH_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.existingSecret }}
-                  key: oidc-client-secret
+                  key: client_secret
             {{- end }}
           {{- end }}
           ports:

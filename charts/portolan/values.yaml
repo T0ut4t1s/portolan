@@ -47,16 +47,20 @@ flows:
 #
 #   kubectl create secret generic portolan-auth \
 #     --from-literal=session-key="$(head -c32 /dev/urandom | base64)" \
-#     --from-literal=oidc-client-secret="<from your provider>"
+#     --from-literal=client_id="portolan" \
+#     --from-literal=client_secret="<from your provider>"
 #
 #   auth:
 #     mode: oidc
 #     existingSecret: portolan-auth
 #     oidc:
 #       issuer: https://sso.example.com/application/o/portolan/
-#       clientID: <not a secret>
 #       redirectURL: https://portolan.example.com/auth/callback
 #       allowedGroups: [portolan-viewers]
+#
+# The client id is not itself a secret, but it lives in the Secret beside the
+# client secret so the client's identity stays whole — one place to read, one
+# place to rotate. Set auth.oidc.clientID below to override it from values.
 #
 # Register redirectURL with the provider exactly as written. Signing out ends
 # the Portolan session only — not your provider's SSO session.
@@ -72,8 +76,11 @@ auth:
     # Issuer must match the `iss` claim the provider puts in its tokens, to the
     # character (Authentik includes the trailing slash).
     issuer: ""
-    clientID: ""
     redirectURL: ""
+
+    # Optional. Leave empty and the client id comes from the Secret's client_id
+    # key, beside the client secret. Set it here to keep it in values instead.
+    clientID: ""
 
     # Optional. The address to *dial* for the back-channel calls — discovery, the
     # signing keys, and the code exchange — instead of the issuer's own host.
