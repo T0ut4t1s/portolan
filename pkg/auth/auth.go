@@ -16,6 +16,7 @@ package auth
 
 import (
 	"bufio"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -33,18 +34,27 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Mode selects the authentication scheme. OIDC is a planned second mode that
-// will reuse this package's session layer.
+// Mode selects the authentication scheme. Both modes that authenticate share
+// this package's session layer — they differ only in how a session is minted.
 type Mode string
 
 const (
 	ModeNone  Mode = "none"  // no auth (default) — for CLI use or behind a trusted proxy
 	ModeLocal Mode = "local" // built-in username/password, bcrypt-hashed
+	ModeOIDC  Mode = "oidc"  // authorization-code flow with PKCE against an OIDC provider
 )
 
 const (
 	cookieName    = "portolan_session"
 	sessionKeyLen = 32 // AES-256
+)
+
+// Cookie purposes are bound into the AEAD as additional authenticated data, so
+// a token sealed for one purpose cannot be opened as the other. The session
+// cookie and the OIDC login transaction share a key but not a namespace.
+const (
+	purposeSession = "portolan/session/v1"
+	purposeTx      = "portolan/oidc-tx/v1"
 )
 
 // Config is the resolved auth configuration for serve mode.
@@ -55,6 +65,8 @@ type Config struct {
 	SessionTTL time.Duration
 	// Users maps username -> bcrypt hash (local mode).
 	Users map[string]string
+	// OIDC configures mode oidc.
+	OIDC *OIDCConfig
 	// Insecure drops the cookie Secure flag — for plain-HTTP local testing
 	// only. In production the browser⇔proxy leg is HTTPS, so leave this false
 	// even though the pod itself is reached over HTTP behind TLS termination.
@@ -66,28 +78,31 @@ type Config struct {
 type Authenticator struct {
 	cfg       Config
 	aead      cipher.AEAD
-	dummyHash []byte // constant-time decoy for unknown users (defeats enumeration timing)
+	dummyHash []byte      // constant-time decoy for unknown users (defeats enumeration timing)
+	oidc      *oidcClient // nil unless Mode is oidc
 	tmpl      *loginTemplate
 }
 
 // New validates cfg and builds an Authenticator. In mode "none" it returns a
 // pass-through. Otherwise it fails closed on any misconfiguration — a
 // half-configured auth is worse than none.
-func New(cfg Config) (*Authenticator, error) {
+//
+// In mode oidc this reaches the provider for discovery, so it can block for as
+// long as the discovery retry budget (see newOIDCClient); ctx also governs the
+// background refresh of the provider's signing keys, so pass one that lives as
+// long as the server.
+func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 	if cfg.Mode == "" {
 		cfg.Mode = ModeNone
 	}
 	if cfg.Mode == ModeNone {
 		return &Authenticator{cfg: cfg}, nil
 	}
-	if cfg.Mode != ModeLocal {
+	if cfg.Mode != ModeLocal && cfg.Mode != ModeOIDC {
 		return nil, fmt.Errorf("auth: unknown mode %q", cfg.Mode)
 	}
 	if len(cfg.SessionKey) != sessionKeyLen {
 		return nil, fmt.Errorf("auth: session key must be %d bytes, got %d", sessionKeyLen, len(cfg.SessionKey))
-	}
-	if len(cfg.Users) == 0 {
-		return nil, errors.New("auth: mode local requires at least one user")
 	}
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 12 * time.Hour
@@ -100,13 +115,31 @@ func New(cfg Config) (*Authenticator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
-	// A real (unmatchable) hash so a login attempt for an unknown user still
-	// pays the bcrypt cost — otherwise response timing leaks which users exist.
-	dummy, err := bcrypt.GenerateFromPassword([]byte("portolan-decoy"), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
+	a := &Authenticator{cfg: cfg, aead: aead, tmpl: loginTmpl()}
+
+	switch cfg.Mode {
+	case ModeLocal:
+		if len(cfg.Users) == 0 {
+			return nil, errors.New("auth: mode local requires at least one user")
+		}
+		// A real (unmatchable) hash so a login attempt for an unknown user still
+		// pays the bcrypt cost — otherwise response timing leaks which users exist.
+		dummy, err := bcrypt.GenerateFromPassword([]byte("portolan-decoy"), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("auth: %w", err)
+		}
+		a.dummyHash = dummy
+	case ModeOIDC:
+		if cfg.OIDC == nil {
+			return nil, errors.New("auth: mode oidc requires OIDC configuration")
+		}
+		oc, err := newOIDCClient(ctx, cfg.OIDC)
+		if err != nil {
+			return nil, err
+		}
+		a.oidc = oc
 	}
-	return &Authenticator{cfg: cfg, aead: aead, dummyHash: dummy, tmpl: loginTmpl()}, nil
+	return a, nil
 }
 
 // Enabled reports whether any auth mode is active.
@@ -119,9 +152,11 @@ type session struct {
 	Exp int64  `json:"e"` // unix seconds
 }
 
-// encode seals a session into a URL-safe token: nonce ‖ AES-GCM(plaintext).
-func (a *Authenticator) encode(s session) (string, error) {
-	pt, err := json.Marshal(s)
+// seal encrypts v into a URL-safe token: nonce ‖ AES-GCM(json(v)). The purpose
+// is authenticated but not carried, so a token minted for one purpose fails to
+// open under another.
+func (a *Authenticator) seal(purpose string, v any) (string, error) {
+	pt, err := json.Marshal(v)
 	if err != nil {
 		return "", err
 	}
@@ -129,27 +164,37 @@ func (a *Authenticator) encode(s session) (string, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	sealed := a.aead.Seal(nonce, nonce, pt, nil)
+	sealed := a.aead.Seal(nonce, nonce, pt, []byte(purpose))
 	return base64.RawURLEncoding.EncodeToString(sealed), nil
 }
 
-// decode verifies and opens a token, returning the subject if it is
-// authentic and unexpired.
-func (a *Authenticator) decode(tok string) (string, bool) {
+// open authenticates a token against purpose and unmarshals it into v.
+func (a *Authenticator) open(purpose, tok string, v any) bool {
 	raw, err := base64.RawURLEncoding.DecodeString(tok)
 	if err != nil || len(raw) < a.aead.NonceSize() {
-		return "", false
+		return false
 	}
 	nonce, ct := raw[:a.aead.NonceSize()], raw[a.aead.NonceSize():]
-	pt, err := a.aead.Open(nil, nonce, ct, nil)
+	pt, err := a.aead.Open(nil, nonce, ct, []byte(purpose))
 	if err != nil {
-		return "", false
+		return false
 	}
+	return json.Unmarshal(pt, v) == nil
+}
+
+// encode seals a session cookie.
+func (a *Authenticator) encode(s session) (string, error) {
+	return a.seal(purposeSession, s)
+}
+
+// decode verifies and opens a session token, returning the subject if it is
+// authentic and unexpired.
+func (a *Authenticator) decode(tok string) (string, bool) {
 	var s session
-	if err := json.Unmarshal(pt, &s); err != nil {
+	if !a.open(purposeSession, tok, &s) {
 		return "", false
 	}
-	if time.Now().Unix() >= s.Exp {
+	if s.Sub == "" || time.Now().Unix() >= s.Exp {
 		return "", false
 	}
 	return s.Sub, true
@@ -185,9 +230,11 @@ func (a *Authenticator) user(r *http.Request) string {
 // ---- gate ----
 
 // public paths bypass the gate: liveness and the auth endpoints themselves.
+// /auth/callback in particular must be reachable without a session — it is
+// where a session comes from.
 func isPublic(p string) bool {
 	switch p {
-	case "/healthz", "/login", "/logout":
+	case "/healthz", "/login", "/logout", "/auth/login", "/auth/callback":
 		return true
 	}
 	return false
@@ -218,24 +265,58 @@ func wantsHTML(r *http.Request) bool {
 
 // ---- login endpoints ----
 
-// Register mounts /login and /logout on mux (no-op in mode none).
+// Register mounts the auth endpoints on mux (no-op in mode none).
 func (a *Authenticator) Register(mux *http.ServeMux) {
 	if !a.Enabled() {
 		return
 	}
 	mux.HandleFunc("GET /login", a.loginForm)
-	mux.HandleFunc("POST /login", a.loginSubmit)
+	switch a.cfg.Mode {
+	case ModeLocal:
+		mux.HandleFunc("POST /login", a.loginSubmit)
+	case ModeOIDC:
+		mux.HandleFunc("GET /auth/login", a.oidcStart)
+		mux.HandleFunc("GET /auth/callback", a.oidcCallback)
+	}
 	// POST only: a GET /logout can be fired by any third-party page (an <img>
 	// tag is enough) to sign a viewer out.
 	mux.HandleFunc("POST /logout", a.logout)
 }
 
 func (a *Authenticator) loginForm(w http.ResponseWriter, r *http.Request) {
+	next := safeNext(r.URL.Query().Get("next"))
 	if a.user(r) != "" { // already logged in
-		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusFound)
+		http.Redirect(w, r, next, http.StatusFound)
 		return
 	}
-	a.tmpl.render(w, safeNext(r.URL.Query().Get("next")), r.URL.Query().Get("err") != "")
+	v := loginView{
+		Next:  next,
+		Error: errMessage(r.URL.Query().Get("err")),
+	}
+	if r.URL.Query().Get("signedout") != "" {
+		v.Note = "You have been signed out."
+	}
+	if a.cfg.Mode == ModeOIDC {
+		v.OIDC = true
+		v.Provider = a.oidc.name
+		v.StartURL = "/auth/login?next=" + url.QueryEscape(next)
+	}
+	a.tmpl.render(w, v)
+}
+
+// errMessage maps the opaque ?err= code to fixed copy. The query string is
+// never echoed into the page, and the provider's own error text stays in the
+// server log rather than the browser.
+func errMessage(code string) string {
+	switch code {
+	case "creds":
+		return "Incorrect username or password."
+	case "denied":
+		return "Your account is not permitted to view this dashboard."
+	case "failed":
+		return "Sign-in did not complete. Please try again."
+	}
+	return ""
 }
 
 func (a *Authenticator) loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +338,7 @@ func (a *Authenticator) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		hash = string(a.dummyHash) // equalize timing for unknown users
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(pass)) != nil || !ok {
-		http.Redirect(w, r, "/login?err=1&next="+url.QueryEscape(next), http.StatusFound)
+		http.Redirect(w, r, "/login?err=creds&next="+url.QueryEscape(next), http.StatusFound)
 		return
 	}
 
@@ -271,6 +352,10 @@ func (a *Authenticator) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, next, http.StatusFound)
 }
 
+// logout ends the Portolan session and nothing else. In oidc mode it
+// deliberately does not drive the provider's end_session_endpoint: signing out
+// of Portolan should not sign you out of every other app behind the same IdP.
+// Ending the IdP session is the IdP's own affair.
 func (a *Authenticator) logout(w http.ResponseWriter, r *http.Request) {
 	// Same guard as login: SameSite=Lax withholds the cookie from a cross-site
 	// POST, but the response could still clear it, so a hostile page could
@@ -280,7 +365,10 @@ func (a *Authenticator) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.clearCookie(w)
-	http.Redirect(w, r, "/login", http.StatusFound)
+	// Land on the card rather than bouncing straight back through the IdP,
+	// which — with a live SSO session — would silently sign the viewer back in
+	// and make sign-out look broken.
+	http.Redirect(w, r, "/login?signedout=1", http.StatusFound)
 }
 
 // safeNext prevents open-redirects: only local absolute paths are allowed.

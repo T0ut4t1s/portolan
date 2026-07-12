@@ -4,6 +4,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,7 +28,7 @@ func testAuth(t *testing.T) *Authenticator {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := New(Config{
+	a, err := New(context.Background(), Config{
 		Mode: ModeLocal, SessionKey: key, SessionTTL: time.Hour,
 		Users: map[string]string{"alice": string(h)}, Insecure: true,
 	})
@@ -48,12 +49,12 @@ func TestNewFailsClosed(t *testing.T) {
 		{Mode: "bogus", SessionKey: make([]byte, 32), Users: map[string]string{"a": "$2a$x"}},   // bad mode
 	}
 	for i, c := range cases {
-		if _, err := New(c); err == nil {
+		if _, err := New(context.Background(), c); err == nil {
 			t.Errorf("case %d: expected error, got nil", i)
 		}
 	}
 	// mode none is always fine and a pass-through.
-	a, err := New(Config{Mode: ModeNone})
+	a, err := New(context.Background(), Config{Mode: ModeNone})
 	if err != nil || a.Enabled() {
 		t.Fatalf("mode none: err=%v enabled=%v", err, a.Enabled())
 	}
@@ -134,7 +135,7 @@ func TestGate(t *testing.T) {
 }
 
 func TestModeNonePassesThrough(t *testing.T) {
-	a, _ := New(Config{Mode: ModeNone})
+	a, _ := New(context.Background(), Config{Mode: ModeNone})
 	h := a.Middleware(okHandler())
 	r := httptest.NewRequest("GET", "/snapshot.json", nil)
 	w := httptest.NewRecorder()
@@ -182,13 +183,13 @@ func TestLoginFlow(t *testing.T) {
 
 	// wrong password -> redirect back to /login?err
 	w = post("alice", "wrong", "http://example.com")
-	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "err=1") {
+	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "err=creds") {
 		t.Errorf("bad password: got %d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 
 	// unknown user -> same treatment (no cookie, err)
 	w = post("mallory", "whatever", "http://example.com")
-	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "err=1") {
+	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "err=creds") {
 		t.Errorf("unknown user: got %d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 	for _, c := range w.Result().Cookies() {
@@ -221,7 +222,7 @@ func TestLogout(t *testing.T) {
 
 	// same-origin POST -> cookie cleared, back to the login page
 	w := logout("POST", "http://example.com")
-	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+	if w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "/login") {
 		t.Fatalf("logout: got %d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 	cleared := false

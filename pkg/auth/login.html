@@ -36,16 +36,19 @@
     border:1px solid var(--line);border-radius:10px;padding:10px 13px;font:inherit;
     font-size:.92rem;color:var(--ink);margin-bottom:15px;}
   input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
-  button{width:100%;background:var(--accent);color:#fff;border:1px solid var(--accent);
-    border-radius:10px;padding:11px;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;margin-top:4px;}
-  button:hover{filter:brightness(1.06);}
+  button,.btn{display:block;width:100%;background:var(--accent);color:#fff;border:1px solid var(--accent);
+    border-radius:10px;padding:11px;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;margin-top:4px;
+    text-align:center;text-decoration:none;}
+  button:hover,.btn:hover{filter:brightness(1.06);}
   .err{background:var(--deny-soft);border:1px solid var(--deny);color:var(--deny);
+    border-radius:9px;padding:9px 12px;font-size:.8rem;margin:0 0 16px;}
+  .note{background:var(--accent-soft);border:1px solid var(--line-2);color:var(--muted);
     border-radius:9px;padding:9px 12px;font-size:.8rem;margin:0 0 16px;}
   .foot{margin-top:18px;font-family:var(--mono);font-size:.66rem;color:var(--muted);text-align:center;}
 </style>
 </head>
 <body>
-  <form class="card" method="post" action="/login" autocomplete="on">
+  <div class="card">
     <div class="brand">
       <svg viewBox="0 0 64 64" aria-hidden="true">
         <path class="rose" d="M32 5 L38.4 25.6 L59 32 L38.4 38.4 L32 59 L25.6 38.4 L5 32 L25.6 25.6 Z"/>
@@ -55,14 +58,21 @@
       <h1><b>Portolan</b> sign in</h1>
     </div>
     <p class="sub">This dashboard is protected. Sign in to view the cluster's network policy map.</p>
-    {{if .Error}}<div class="err">Incorrect username or password.</div>{{end}}
-    <input type="hidden" name="next" value="{{.Next}}">
-    <label for="u">Username</label>
-    <input id="u" type="text" name="username" autocomplete="username" autofocus required>
-    <label for="p">Password</label>
-    <input id="p" type="password" name="password" autocomplete="current-password" required>
-    <button type="submit">Sign in</button>
+    {{if .Note}}<div class="note">{{.Note}}</div>{{end}}
+    {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+    {{if .OIDC}}
+    <a class="btn" href="{{.StartURL}}">Sign in with {{.Provider}}</a>
+    {{else}}
+    <form method="post" action="/login" autocomplete="on">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label for="u">Username</label>
+      <input id="u" type="text" name="username" autocomplete="username" autofocus required>
+      <label for="p">Password</label>
+      <input id="p" type="password" name="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+    {{end}}
     <div class="foot">read-only · your session is stored in a signed cookie</div>
-  </form>
+  </div>
 </body>
 </html>

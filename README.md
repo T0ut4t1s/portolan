@@ -223,10 +223,14 @@ The dashboard renders, in effect, a cluster attack map — it should not be serv
 open on an untrusted network. `serve` supports opt-in sign-in; it defaults to
 `none` (open) so nothing changes for trusted-network or proxy-gated setups.
 
-**Local login** requires a username and password before any route except
-`/healthz` and the login page. Sessions are a stateless, signed-and-encrypted
-cookie (AES-256-GCM) — no server-side session store, no database. Set it up in
-three steps:
+Two modes authenticate: **local** (username/password) and **oidc** (your identity
+provider). Both issue the same session — a stateless, signed-and-encrypted cookie
+(AES-256-GCM), with no server-side store and no database — and both gate every
+route except `/healthz` and the login endpoints.
+
+### Local login
+
+Set it up in three steps:
 
 ```bash
 # 1. A 32-byte key that signs the session cookie:
@@ -252,18 +256,66 @@ helm upgrade --install portolan charts/portolan \
   --set auth.mode=local --set auth.existingSecret=portolan-auth
 ```
 
+### OIDC
+
+Mode `oidc` runs the authorization-code flow with PKCE against any OpenID Connect
+provider — Keycloak, Authentik, Dex, Okta. No proxy, no extra component: Portolan
+is the relying party itself.
+
+```bash
+kubectl create secret generic portolan-auth \
+  --from-literal=session-key="$(head -c32 /dev/urandom | base64)" \
+  --from-literal=oidc-client-secret="<from your provider>"
+
+helm upgrade --install portolan charts/portolan \
+  --set auth.mode=oidc --set auth.existingSecret=portolan-auth \
+  --set auth.oidc.issuer=https://sso.example.com/application/o/portolan/ \
+  --set auth.oidc.clientID=portolan \
+  --set auth.oidc.redirectURL=https://portolan.example.com/auth/callback \
+  --set 'auth.oidc.allowedGroups={portolan-viewers}'
+```
+
+**Authenticating is not authorizing.** Holding an account at your IdP is not by
+itself a reason to be handed a map of the cluster's network policy, so Portolan
+requires an allowlist — `allowedGroups`, `allowedEmails`, or an explicit
+`allowAnyAuthenticated: true` — and refuses to start with all three unset. An
+address the provider itself marks unverified never satisfies an email allowlist.
+
+By default Portolan reaches the provider at its issuer URL. For an in-cluster IdP
+that means hairpinning out through your public ingress and back, which needs a
+correspondingly wide egress policy. Set `auth.oidc.discoveryURL` to the
+provider's in-cluster Service to keep discovery, key fetches and the token
+exchange inside the cluster, while `iss` is still pinned to the public issuer:
+
+```yaml
+auth:
+  oidc:
+    issuer: https://sso.example.com/application/o/portolan/          # what tokens claim
+    discoveryURL: http://authentik-server.authentik.svc:80/application/o/portolan/
+```
+
+The browser still goes to the public authorization URL, as it must.
+
+Signing out ends the **Portolan session only**. It deliberately does not drive the
+provider's `end_session_endpoint`: leaving Portolan should not sign you out of
+every other app behind the same IdP. Ending the SSO session is the IdP's own affair.
+
+### Notes
+
 With auth on, the map's toolbar grows a **sign out** control on the right. It is
 absent from standalone `render` output and from open deployments, where there is
 no session to end.
 
-Misconfiguration **fails closed**: local mode without a key or users file exits
-before the server binds, so a half-configured deploy never serves open. Because
-sessions are stateless there is no server-side revocation — sign-out clears the
-cookie, and rotating the session key invalidates every issued session at once.
+Misconfiguration **fails closed**: a missing key, users file, issuer or allowlist
+exits before the server binds, so a half-configured deploy never serves open. In
+OIDC mode, a provider that is not up yet is retried for about thirty seconds —
+a cluster-wide restart should not become a crash loop — and then it still exits.
 
-> Native **OIDC** (self-contained login against Keycloak/Authentik and other
-> providers) and **forward-auth** header trust are on the [roadmap](#access);
-> the session layer above is shared with both.
+Because sessions are stateless there is no server-side revocation: sign-out clears
+the cookie, and rotating the session key invalidates every issued session at once.
+
+> **Forward-auth** header trust (running behind an existing OIDC proxy) is on the
+> [roadmap](#access) and would reuse the same session layer.
 
 ## Status
 
@@ -290,9 +342,9 @@ reimplementation or a guess.
 
 - **Local login** *(available)* — username/password sign-in with stateless
   signed-cookie sessions, no database. See [Authentication](#authentication).
-- **Native OIDC** *(planned)* — self-contained login against Keycloak, Authentik,
-  and other providers for standalone deployments, no proxy required. Reuses the
-  session layer that local login already ships.
+- **Native OIDC** *(available)* — authorization-code flow with PKCE against
+  Keycloak, Authentik and others, with a group/email allowlist. No proxy
+  required; shares the session layer with local login.
 - **Forward-auth support** *(exploring)* — first-class support for running behind
   an existing OIDC proxy (oauth2-proxy, Authentik) by trusting an auth header.
 

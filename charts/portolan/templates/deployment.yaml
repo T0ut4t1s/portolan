@@ -53,22 +53,61 @@ spec:
             - --flows={{ .Values.flows.window }}
             - --hubble-server={{ .Values.flows.server }}
             {{- end }}
+            {{- if ne .Values.auth.mode "none" }}
+            - --auth-session-ttl={{ .Values.auth.sessionTTL }}
+            {{- end }}
             {{- if eq .Values.auth.mode "local" }}
             - --auth-users-file=/etc/portolan/auth/users
-            - --auth-session-ttl={{ .Values.auth.sessionTTL }}
+            {{- end }}
+            {{- if eq .Values.auth.mode "oidc" }}
+            {{- with .Values.auth.oidc }}
+            - --auth-oidc-issuer={{ required "portolan: auth.oidc.issuer is required when auth.mode=oidc" .issuer }}
+            - --auth-oidc-client-id={{ required "portolan: auth.oidc.clientID is required when auth.mode=oidc" .clientID }}
+            - --auth-oidc-redirect-url={{ required "portolan: auth.oidc.redirectURL is required when auth.mode=oidc" .redirectURL }}
+            {{- with .discoveryURL }}
+            - --auth-oidc-discovery-url={{ . }}
+            {{- end }}
+            {{- with .scopes }}
+            - --auth-oidc-scopes={{ join "," . }}
+            {{- end }}
+            {{- with .groupsClaim }}
+            - --auth-oidc-groups-claim={{ . }}
+            {{- end }}
+            {{- with .allowedGroups }}
+            - --auth-oidc-allowed-groups={{ join "," . }}
+            {{- end }}
+            {{- with .allowedEmails }}
+            - --auth-oidc-allowed-emails={{ join "," . }}
+            {{- end }}
+            {{- if .allowAnyAuthenticated }}
+            - --auth-oidc-allow-any-authenticated
+            {{- end }}
+            {{- with .providerName }}
+            - {{ printf "--auth-oidc-provider-name=%s" . | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if eq .Values.auth.mode "local" }}
+          {{- if ne .Values.auth.mode "none" }}
+          # Secrets arrive as env, never as args: anything on the command line is
+          # readable from /proc by every process that can see this pod.
           env:
             - name: PORTOLAN_AUTH_MODE
-              value: local
+              value: {{ .Values.auth.mode | quote }}
             - name: PORTOLAN_AUTH_SESSION_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "portolan: auth.existingSecret is required when auth.mode=local" .Values.auth.existingSecret }}
+                  name: {{ required "portolan: auth.existingSecret is required when auth is enabled" .Values.auth.existingSecret }}
                   key: session-key
+            {{- if eq .Values.auth.mode "oidc" }}
+            - name: PORTOLAN_AUTH_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: oidc-client-secret
+            {{- end }}
           {{- end }}
           ports:
             - name: http

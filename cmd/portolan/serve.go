@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,34 +53,120 @@ func envOr(k, def string) string {
 	return def
 }
 
-// buildAuth resolves the auth flags/env into an Authenticator, failing closed
-// on any misconfiguration (mode none returns a pass-through).
-func buildAuth(mode, sessionKey, usersFile string, ttl time.Duration, insecure bool) (*auth.Authenticator, error) {
-	cfg := auth.Config{Mode: auth.Mode(mode), SessionTTL: ttl, Insecure: insecure}
-	if cfg.Mode == auth.ModeLocal {
-		if sessionKey == "" {
-			return nil, errors.New("auth: local mode requires --auth-session-key (or PORTOLAN_AUTH_SESSION_KEY)")
-		}
-		key, err := auth.DecodeKey(sessionKey)
-		if err != nil {
-			return nil, fmt.Errorf("auth: %w", err)
-		}
-		cfg.SessionKey = key
-		if usersFile == "" {
+// authFlags is the auth surface of `serve`. Every flag defaults from an
+// environment variable so Kubernetes can inject the secrets without them ever
+// appearing on the command line (where any pod in the namespace could read them
+// out of /proc).
+type authFlags struct {
+	mode       string
+	sessionKey string
+	usersFile  string
+	sessionTTL time.Duration
+	insecure   bool
+
+	oidcIssuer        string
+	oidcDiscoveryURL  string
+	oidcClientID      string
+	oidcClientSecret  string
+	oidcRedirectURL   string
+	oidcScopes        string
+	oidcGroupsClaim   string
+	oidcAllowedGroups string
+	oidcAllowedEmails string
+	oidcAllowAny      bool
+	oidcProviderName  string
+}
+
+func registerAuthFlags(fs *flag.FlagSet) *authFlags {
+	f := &authFlags{}
+	fs.StringVar(&f.mode, "auth-mode", envOr("PORTOLAN_AUTH_MODE", "none"), "authentication: none | local | oidc")
+	fs.StringVar(&f.sessionKey, "auth-session-key", os.Getenv("PORTOLAN_AUTH_SESSION_KEY"), "32-byte session key (base64 or hex); required when auth is enabled")
+	fs.StringVar(&f.usersFile, "auth-users-file", os.Getenv("PORTOLAN_AUTH_USERS_FILE"), "htpasswd-style users file (username:bcrypthash per line) for local auth")
+	fs.DurationVar(&f.sessionTTL, "auth-session-ttl", 12*time.Hour, "session lifetime")
+	fs.BoolVar(&f.insecure, "auth-cookie-insecure", false, "drop the Secure cookie flag (plain-HTTP testing only)")
+
+	fs.StringVar(&f.oidcIssuer, "auth-oidc-issuer", os.Getenv("PORTOLAN_AUTH_OIDC_ISSUER"), "OIDC issuer URL, exactly as the provider states it in the iss claim")
+	fs.StringVar(&f.oidcDiscoveryURL, "auth-oidc-discovery-url", os.Getenv("PORTOLAN_AUTH_OIDC_DISCOVERY_URL"), "fetch discovery, keys and tokens from here instead of the issuer (e.g. an in-cluster Service), while still requiring iss to equal --auth-oidc-issuer")
+	fs.StringVar(&f.oidcClientID, "auth-oidc-client-id", os.Getenv("PORTOLAN_AUTH_OIDC_CLIENT_ID"), "OIDC client ID")
+	fs.StringVar(&f.oidcClientSecret, "auth-oidc-client-secret", os.Getenv("PORTOLAN_AUTH_OIDC_CLIENT_SECRET"), "OIDC client secret (prefer the env var)")
+	fs.StringVar(&f.oidcRedirectURL, "auth-oidc-redirect-url", os.Getenv("PORTOLAN_AUTH_OIDC_REDIRECT_URL"), "absolute callback URL registered with the provider, e.g. https://portolan.example.com/auth/callback")
+	fs.StringVar(&f.oidcScopes, "auth-oidc-scopes", envOr("PORTOLAN_AUTH_OIDC_SCOPES", "openid,profile,email"), "comma-separated scopes to request")
+	fs.StringVar(&f.oidcGroupsClaim, "auth-oidc-groups-claim", envOr("PORTOLAN_AUTH_OIDC_GROUPS_CLAIM", "groups"), "ID-token claim holding the user's groups")
+	fs.StringVar(&f.oidcAllowedGroups, "auth-oidc-allowed-groups", os.Getenv("PORTOLAN_AUTH_OIDC_ALLOWED_GROUPS"), "comma-separated groups permitted to view the map")
+	fs.StringVar(&f.oidcAllowedEmails, "auth-oidc-allowed-emails", os.Getenv("PORTOLAN_AUTH_OIDC_ALLOWED_EMAILS"), "comma-separated email addresses permitted to view the map")
+	fs.BoolVar(&f.oidcAllowAny, "auth-oidc-allow-any-authenticated", envBool("PORTOLAN_AUTH_OIDC_ALLOW_ANY_AUTHENTICATED"), "admit every account the provider authenticates (no allowlist)")
+	fs.StringVar(&f.oidcProviderName, "auth-oidc-provider-name", os.Getenv("PORTOLAN_AUTH_OIDC_PROVIDER_NAME"), "name shown on the sign-in button (default: the issuer's host)")
+	return f
+}
+
+// build resolves the flags into an Authenticator, failing closed on any
+// misconfiguration (mode none returns a pass-through).
+func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
+	cfg := auth.Config{Mode: auth.Mode(f.mode), SessionTTL: f.sessionTTL, Insecure: f.insecure}
+	if cfg.Mode == "" || cfg.Mode == auth.ModeNone {
+		return auth.New(ctx, cfg)
+	}
+
+	// Both authenticating modes issue the same sealed session cookie, so both
+	// need the key.
+	if f.sessionKey == "" {
+		return nil, errors.New("auth: --auth-session-key (or PORTOLAN_AUTH_SESSION_KEY) is required when auth is enabled")
+	}
+	key, err := auth.DecodeKey(f.sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+	cfg.SessionKey = key
+
+	switch cfg.Mode {
+	case auth.ModeLocal:
+		if f.usersFile == "" {
 			return nil, errors.New("auth: local mode requires --auth-users-file (or PORTOLAN_AUTH_USERS_FILE)")
 		}
-		f, err := os.Open(usersFile)
+		file, err := os.Open(f.usersFile)
 		if err != nil {
 			return nil, fmt.Errorf("auth: opening users file: %w", err)
 		}
-		defer f.Close()
-		users, err := auth.LoadUsers(f)
+		defer file.Close()
+		users, err := auth.LoadUsers(file)
 		if err != nil {
 			return nil, fmt.Errorf("auth: users file: %w", err)
 		}
 		cfg.Users = users
+	case auth.ModeOIDC:
+		cfg.OIDC = &auth.OIDCConfig{
+			Issuer:                f.oidcIssuer,
+			DiscoveryURL:          f.oidcDiscoveryURL,
+			ClientID:              f.oidcClientID,
+			ClientSecret:          f.oidcClientSecret,
+			RedirectURL:           f.oidcRedirectURL,
+			Scopes:                splitList(f.oidcScopes),
+			GroupsClaim:           f.oidcGroupsClaim,
+			AllowedGroups:         splitList(f.oidcAllowedGroups),
+			AllowedEmails:         splitList(f.oidcAllowedEmails),
+			AllowAnyAuthenticated: f.oidcAllowAny,
+			ProviderName:          f.oidcProviderName,
+		}
 	}
-	return auth.New(cfg)
+	return auth.New(ctx, cfg)
+}
+
+// envBool reads a boolean environment variable, treating anything unparseable
+// as unset — a typo must not silently widen access.
+func envBool(k string) bool {
+	b, err := strconv.ParseBool(os.Getenv(k))
+	return err == nil && b
+}
+
+// splitList parses a comma-separated flag into its non-empty, trimmed parts.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func cmdServe(ctx context.Context, args []string) error {
@@ -93,21 +180,17 @@ func cmdServe(ctx context.Context, args []string) error {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
 	flowWindow := fs.Duration("flows", 0, "capture Hubble flow observations over this look-back window each cycle, e.g. 15m (0: off)")
 	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
-	// Auth (opt-in; default none). Flags default from env so secrets can be
-	// injected as env vars in Kubernetes without appearing on the command line.
-	authMode := fs.String("auth-mode", envOr("PORTOLAN_AUTH_MODE", "none"), "authentication: none | local")
-	authSessionKey := fs.String("auth-session-key", os.Getenv("PORTOLAN_AUTH_SESSION_KEY"), "32-byte session key (base64 or hex); required when auth is enabled")
-	authUsersFile := fs.String("auth-users-file", os.Getenv("PORTOLAN_AUTH_USERS_FILE"), "htpasswd-style users file (username:bcrypthash per line) for local auth")
-	authSessionTTL := fs.Duration("auth-session-ttl", 12*time.Hour, "session lifetime")
-	authInsecure := fs.Bool("auth-cookie-insecure", false, "drop the Secure cookie flag (plain-HTTP testing only)")
+	// Auth is opt-in; the default is none.
+	authFlags := registerAuthFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	// Build the authenticator up front so a misconfiguration fails closed
 	// before the server ever binds — a half-configured auth must never serve
-	// the map open.
-	authn, err := buildAuth(*authMode, *authSessionKey, *authUsersFile, *authSessionTTL, *authInsecure)
+	// the map open. In oidc mode this also reaches the provider for discovery,
+	// retrying an IdP that is still coming up before giving up.
+	authn, err := authFlags.build(ctx)
 	if err != nil {
 		return err
 	}
@@ -267,7 +350,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	}()
 	fmt.Fprintf(os.Stderr, "serving on %s (interval %s)\n", *addr, *interval)
 	if authn.Enabled() {
-		fmt.Fprintf(os.Stderr, "auth: %s mode enabled\n", *authMode)
+		fmt.Fprintf(os.Stderr, "auth: %s mode enabled\n", authFlags.mode)
 	}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
