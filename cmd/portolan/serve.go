@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/T0ut4t1s/portolan/pkg/auth"
+	"github.com/T0ut4t1s/portolan/pkg/flowstore"
 	"github.com/T0ut4t1s/portolan/pkg/graph"
 	"github.com/T0ut4t1s/portolan/pkg/render"
 	"github.com/T0ut4t1s/portolan/pkg/snapshot"
@@ -43,6 +44,13 @@ type server struct {
 	// whatifMu serializes simulations: each one is a multi-second
 	// full-CPU sweep, and piling them up helps nobody.
 	whatifMu sync.Mutex
+
+	// flows is the accumulated observation store (nil when --flows is off),
+	// and flowWindow the look-back the map opens on. The store is what lets
+	// the capture-window control mean anything: re-asking Hubble would just
+	// return the same handful of seconds whatever window was picked.
+	flows      snapshot.FlowSource
+	flowWindow time.Duration
 }
 
 // envOr returns environment variable k if set, otherwise def.
@@ -185,7 +193,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	keep := fs.Int("keep", 500, "snapshots to retain in the data directory")
 	clusterName := fs.String("cluster-name", "", "cluster label recorded in snapshots")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
-	flowWindow := fs.Duration("flows", 0, "capture Hubble flow observations over this look-back window each cycle, e.g. 15m (0: off)")
+	flowWindow := fs.Duration("flows", 0, "observe Hubble flows, and show this look-back window on the map by default, e.g. 24h (0: off). Serve mode streams continuously, so the window is a query over what was accumulated — not a request to Hubble, whose buffer holds only seconds")
 	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
 	// Auth is opt-in; the default is none.
 	authFlags := registerAuthFlags(fs)
@@ -225,15 +233,53 @@ func cmdServe(ctx context.Context, args []string) error {
 		cycleTimeout = *interval
 	}
 
+	// Continuous flow observation.
+	//
+	// Serve mode does NOT poll Hubble for the window: Cilium's event buffer is
+	// bounded by capacity rather than time (4095 events per agent by default),
+	// so on a busy cluster a request for 15m of history is answered with the
+	// last few seconds and no hint that it fell short. Polling it every 15
+	// minutes observes ~1% of the traffic and reports it as if it had watched
+	// the lot — periodic traffic (a CronJob, a backup) lands between the
+	// samples and vanishes.
+	//
+	// So we listen instead: one long-lived stream feeding a rolling store, and
+	// the window becomes a query over what was actually seen.
+	var flowSource snapshot.FlowSource
+	if *flowWindow > 0 {
+		if *dataDir == "" {
+			return errors.New("serve: --flows needs --data: continuous flow observation accumulates to a store on disk, so the window survives a restart")
+		}
+		store, err := flowstore.Open(filepath.Join(*dataDir, "flows.db"))
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		flowSource = store.Live()
+
+		// Resolve peers through the collector's live pod index — as flows
+		// arrive, not at snapshot time, since a pod that dies in between can no
+		// longer be resolved to its controller.
+		acc := snapshot.NewAccumulator(*hubbleServer, store, col.Resolve)
+		go acc.Run(ctx)
+		go pruneFlows(ctx, store, *interval)
+		fmt.Fprintf(os.Stderr, "flows: streaming from %s, default window %s (retaining %s)\n",
+			*hubbleServer, snapshot.ShortDur(*flowWindow), snapshot.ShortDur(flowstore.MaxWindow))
+	}
+
 	// Fixed for the life of the process: every viewer gets the same bytes, so
 	// this can only carry deployment facts, never anything per-user.
 	ui := render.UI{Auth: authn.Enabled()}
 
-	s := &server{}
+	s := &server{flows: flowSource, flowWindow: *flowWindow}
 	collect := func() {
 		cctx, cancel := context.WithTimeout(ctx, cycleTimeout)
 		defer cancel()
-		snap, err := col.Collect(cctx, snapshot.FlowOptions{Server: *hubbleServer, Window: *flowWindow})
+		snap, err := col.Collect(cctx, snapshot.FlowOptions{
+			Server: *hubbleServer,
+			Window: *flowWindow,
+			Source: flowSource,
+		})
 		if err != nil {
 			s.mu.Lock()
 			s.lastErr = err.Error()
@@ -278,8 +324,13 @@ func cmdServe(ctx context.Context, args []string) error {
 			len(snap.Namespaces), len(snap.Workloads), len(snap.Policies), g.Stats.Edges)
 		if snap.Flows != nil {
 			if snap.Flows.Status == "ok" {
-				fmt.Fprintf(os.Stderr, "flows: %d edges from %d events over %s\n",
-					len(snap.Flows.Edges), snap.Flows.FlowsSeen, snap.Flows.Window)
+				// Report the window ACTUALLY observed, not the one requested.
+				// The old line said "over 15m" whether it had watched fifteen
+				// minutes or twelve seconds, which is precisely how the coverage
+				// problem stayed invisible for so long.
+				fmt.Fprintf(os.Stderr, "flows: %d edges from %d events — %s window, %.0f%% covered (%s observed)\n",
+					len(snap.Flows.Edges), snap.Flows.FlowsSeen, snap.Flows.Window,
+					snap.Flows.Coverage*100, snap.Flows.Watched)
 			} else {
 				fmt.Fprintf(os.Stderr, "flow capture failed (snapshot still valid): %s\n", snap.Flows.Reason)
 			}
@@ -344,6 +395,7 @@ func cmdServe(ctx context.Context, args []string) error {
 		mux.HandleFunc("GET /snapshots/", historyHandler(*dataDir))
 	}
 	mux.HandleFunc("POST /api/whatif", s.whatifHandler)
+	mux.HandleFunc("GET /api/flows", s.flowsHandler)
 	authn.Register(mux) // /login, /logout (no-op in mode none)
 
 	// The gate wraps every route: /healthz and the auth endpoints stay public,
@@ -433,6 +485,83 @@ func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(whatifResponse{Result: res, Manifests: mans})
+}
+
+// maxFlowWindow bounds what the capture-window control may ask for. It matches
+// the store's retention: a longer window would be answered with less than it
+// claims.
+const maxFlowWindow = flowstore.MaxWindow
+
+// flowsHandler answers the map's capture-window control: the observed overlay
+// for an arbitrary look-back, joined onto the graph the page is already
+// showing.
+//
+// This is a query against the accumulated store, not a fresh call to Hubble —
+// which is the only reason the control can exist at all. Asking Hubble for 24h
+// would return the same few seconds its buffer happens to hold, so every window
+// would look alike.
+func (s *server) flowsHandler(w http.ResponseWriter, r *http.Request) {
+	if s.flows == nil {
+		http.Error(w, "flow observation is off (start with --flows)", http.StatusNotFound)
+		return
+	}
+	window := s.flowWindow
+	if q := r.URL.Query().Get("window"); q != "" {
+		d, err := snapshot.ParseWindow(q)
+		if err != nil || d <= 0 {
+			http.Error(w, "window must be a positive duration, e.g. 15m, 6h, 7d", http.StatusBadRequest)
+			return
+		}
+		if d > maxFlowWindow {
+			http.Error(w, fmt.Sprintf("window must be at most %s (the store retains no more)",
+				snapshot.ShortDur(maxFlowWindow)), http.StatusBadRequest)
+			return
+		}
+		window = d
+	}
+
+	s.mu.RLock()
+	snap := s.snap
+	s.mu.RUnlock()
+	if snap == nil {
+		http.Error(w, "no successful collection yet", http.StatusServiceUnavailable)
+		return
+	}
+
+	fc, err := s.flows.Capture(r.Context(), window)
+	if err != nil {
+		// An empty store is the normal state for the first minute after start,
+		// not a fault: say so plainly rather than 500.
+		if errors.Is(err, flowstore.ErrNoObservations) {
+			http.Error(w, "nothing observed yet — the flow stream is still warming up", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "flow query failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Join onto the graph the page is already drawing, so node ids line up.
+	// graph.Overlay does not add nodes: an endpoint the map has no node for is
+	// counted into notShown, which the map surfaces.
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(graph.Overlay(graph.Build(snap), fc))
+}
+
+// pruneFlows ages observations out of the store on the collection cadence, so
+// the PVC stays bounded by MaxWindow rather than by uptime.
+func pruneFlows(ctx context.Context, store *flowstore.Store, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := store.Prune(ctx, time.Now()); err != nil {
+				fmt.Fprintf(os.Stderr, "flow store: prune failed: %v\n", err)
+			}
+		}
+	}
 }
 
 // historyHandler lists and serves the snapshot archive.

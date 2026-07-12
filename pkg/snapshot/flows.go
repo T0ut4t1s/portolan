@@ -28,6 +28,11 @@ type FlowOptions struct {
 	Server string
 	// Window is the look-back period requested from the relay.
 	Window time.Duration
+	// Source, when set, answers the window instead of reading Hubble's buffer
+	// — serve mode passes its accumulator here. Nil falls back to the polled
+	// read, which is all a one-shot command can do. The difference is not a
+	// detail: see FlowSource.
+	Source FlowSource
 }
 
 // flowCollectTimeout bounds one whole capture: dialing, streaming the
@@ -65,6 +70,32 @@ var entityPriority = []string{
 	"unknown",
 }
 
+// flowWhitelist is the event filter both the polled read and the streaming
+// accumulator use — shared so a streamed capture and a sampled one can never
+// disagree about what counts as an observation.
+//
+// Two OR'd filters, because forwarded and dropped traffic need different reply
+// handling: forwarded flows are deduplicated to the original direction
+// (reply=false), but drop events usually carry UNKNOWN reply state (there is no
+// conntrack entry for a denied connection) and Hubble's reply filter excludes
+// unknown — a reply constraint there would silently discard most drops.
+func flowWhitelist() []*flowpb.FlowFilter {
+	return []*flowpb.FlowFilter{
+		{
+			Reply:   []bool{false},
+			Verdict: []flowpb.Verdict{flowpb.Verdict_FORWARDED},
+			EventType: []*flowpb.EventTypeFilter{
+				{Type: msgTypeTrace},
+				{Type: msgTypeAccessLog},
+			},
+		},
+		{
+			Verdict:   []flowpb.Verdict{flowpb.Verdict_DROPPED},
+			EventType: []*flowpb.EventTypeFilter{{Type: msgTypeDrop}},
+		},
+	}
+}
+
 // flowResolver maps a live pod to its resolved controller identity; the
 // collector wires in its own pod index so flow peers land on the same
 // workload nodes the policy map draws.
@@ -88,29 +119,17 @@ func collectFlows(ctx context.Context, opts FlowOptions, resolve flowResolver) (
 	// Since+Until without Number streams every buffered flow in the window,
 	// then the server ends the stream — no follow mode, bounded by design.
 	//
-	// Two OR'd filters, because forwarded and dropped traffic need different
-	// reply handling: forwarded flows are deduplicated to the original
-	// direction (reply=false), but drop events usually carry UNKNOWN reply
-	// state (no conntrack entry for a denied connection) and Hubble's reply
-	// filter excludes unknown — a reply constraint there would silently
-	// discard most drops.
+	// What it CANNOT do is honour the window. Hubble's event buffer is bounded
+	// by capacity (4095 events per agent by default), not by time, so on a busy
+	// cluster this returns the last few seconds no matter how far back the
+	// window reaches — and says nothing about the shortfall. OldestFlow, set
+	// below, is the only thing that reveals it. Serve mode uses Accumulator
+	// instead; this path exists for one-shot commands that have no process to
+	// keep listening with.
 	req := &observerpb.GetFlowsRequest{
-		Since: timestamppb.New(agg.capture.From),
-		Until: timestamppb.New(now),
-		Whitelist: []*flowpb.FlowFilter{
-			{
-				Reply:   []bool{false},
-				Verdict: []flowpb.Verdict{flowpb.Verdict_FORWARDED},
-				EventType: []*flowpb.EventTypeFilter{
-					{Type: msgTypeTrace},
-					{Type: msgTypeAccessLog},
-				},
-			},
-			{
-				Verdict:   []flowpb.Verdict{flowpb.Verdict_DROPPED},
-				EventType: []*flowpb.EventTypeFilter{{Type: msgTypeDrop}},
-			},
-		},
+		Since:     timestamppb.New(agg.capture.From),
+		Until:     timestamppb.New(now),
+		Whitelist: flowWhitelist(),
 	}
 
 	stream, err := observerpb.NewObserverClient(conn).GetFlows(ctx, req)
@@ -161,8 +180,9 @@ func newFlowAggregator(opts FlowOptions, now time.Time, resolve flowResolver) *f
 	return &flowAggregator{
 		capture: &FlowCapture{
 			Status: "ok",
+			Source: FlowSourceBuffer,
 			Server: opts.Server,
-			Window: opts.Window.String(),
+			Window: ShortDur(opts.Window),
 			From:   now.Add(-opts.Window),
 			To:     now,
 		},
@@ -230,6 +250,27 @@ func (a *flowAggregator) finish() *FlowCapture {
 		)
 	})
 	a.capture.Edges = out
+
+	// Coverage for a polled read is whatever slice of the window the buffer
+	// still held: everything from the oldest event returned to the end of the
+	// window. On a busy cluster this is routinely a second or two of a
+	// fifteen-minute ask, and the whole point of stating it is that the
+	// shortfall is otherwise invisible — the relay answers a 15m request with
+	// 12s of data and no complaint.
+	if !a.capture.OldestFlow.IsZero() {
+		observed := a.capture.To.Sub(a.capture.OldestFlow)
+		if observed < 0 {
+			observed = 0
+		}
+		a.capture.Watched = observed.Round(time.Second).String()
+		if window := a.capture.To.Sub(a.capture.From); window > 0 {
+			ratio := float64(observed) / float64(window)
+			if ratio > 1 {
+				ratio = 1
+			}
+			a.capture.Coverage = ratio
+		}
+	}
 	return a.capture
 }
 

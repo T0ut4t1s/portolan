@@ -18,11 +18,20 @@ type FlowOverlay struct {
 	// Status mirrors the capture: "ok", or "error" with Reason when the
 	// snapshot recorded a failed capture (the overlay then renders a notice
 	// instead of pretending there was no traffic).
-	Status     string    `json:"status"`
-	Reason     string    `json:"reason,omitempty"`
-	Window     string    `json:"window"`
-	From       time.Time `json:"from,omitzero"`
-	To         time.Time `json:"to,omitzero"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	// Source is "stream" (accumulated continuously — the window means what it
+	// says) or "buffer" (one read of Hubble's event buffer, which on a busy
+	// cluster holds seconds regardless of the window asked for). The map says
+	// which, because it decides whether an unobserved edge means anything.
+	Source string    `json:"source,omitempty"`
+	Window string    `json:"window"`
+	From   time.Time `json:"from,omitzero"`
+	To     time.Time `json:"to,omitzero"`
+	// Watched is how much of the window was really observed, Coverage the
+	// fraction (0..1). Low coverage means absence proves nothing.
+	Watched    string    `json:"watched,omitempty"`
+	Coverage   float64   `json:"coverage,omitempty"`
 	OldestFlow time.Time `json:"oldestFlow,omitzero"`
 	FlowsSeen  int       `json:"flowsSeen"`
 	LostEvents int       `json:"lostEvents,omitempty"`
@@ -63,30 +72,48 @@ type DropEdge struct {
 	LastSeen time.Time `json:"last,omitzero"`
 }
 
-// attachFlows joins a snapshot's flow capture onto the built graph. Flow
-// peers already carry the same resolved controller identities the graph's
-// workload nodes use, so the join is a lookup, not a heuristic. Entities
-// observed in traffic but never referenced by any policy (e.g. remote-node)
-// are added to Externals so the map has a node to draw them at.
+// attachFlows joins a snapshot's flow capture onto the built graph and hangs
+// the result off it. Entities observed in traffic but never referenced by any
+// policy (e.g. remote-node) are added to Externals so the map has a node to
+// draw them at.
 func attachFlows(g *Graph, fc *snapshot.FlowCapture) {
+	g.Flows = overlay(g, fc, true)
+}
+
+// Overlay joins a capture onto an ALREADY-BUILT graph without touching it —
+// the re-query behind the map's capture-window control, where the page's node
+// set is already fixed and cannot grow.
+//
+// A wider window can surface an entity the built graph has no node for; it is
+// counted into NotShown/NotShownDrops (which the map surfaces) rather than
+// silently dropped. In practice the reserved entities that carry traffic —
+// world, host, kube-apiserver, remote-node — are constant background and are
+// already on the map.
+func Overlay(g *Graph, fc *snapshot.FlowCapture) *FlowOverlay {
+	return overlay(g, fc, false)
+}
+
+func overlay(g *Graph, fc *snapshot.FlowCapture, addExternals bool) *FlowOverlay {
 	if fc == nil {
-		return
+		return nil
 	}
 	ov := &FlowOverlay{
 		Status:     fc.Status,
 		Reason:     fc.Reason,
+		Source:     string(fc.Source),
 		Window:     fc.Window,
 		From:       fc.From,
 		To:         fc.To,
+		Watched:    fc.Watched,
+		Coverage:   fc.Coverage,
 		OldestFlow: fc.OldestFlow,
 		FlowsSeen:  fc.FlowsSeen,
 		LostEvents: fc.LostEvents,
 		Observed:   []ObservedEdge{},
 		Drops:      []DropEdge{},
 	}
-	g.Flows = ov
 	if fc.Status != "ok" {
-		return
+		return ov
 	}
 
 	nodes := map[string]bool{}
@@ -102,6 +129,9 @@ func attachFlows(g *Graph, fc *snapshot.FlowCapture) {
 		if p.Entity != "" {
 			id := "entity:" + p.Entity
 			if !nodes[id] {
+				if !addExternals {
+					return "", false
+				}
 				g.Externals = append(g.Externals, External{ID: id, Kind: "entity", Name: p.Entity})
 				nodes[id] = true
 			}
@@ -180,5 +210,8 @@ func attachFlows(g *Graph, fc *snapshot.FlowCapture) {
 			cmp.Compare(a.Reason, b.Reason),
 		)
 	})
-	slices.SortFunc(g.Externals, func(a, b External) int { return cmp.Compare(a.ID, b.ID) })
+	if addExternals {
+		slices.SortFunc(g.Externals, func(a, b External) int { return cmp.Compare(a.ID, b.ID) })
+	}
+	return ov
 }

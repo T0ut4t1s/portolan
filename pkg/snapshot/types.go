@@ -118,14 +118,29 @@ type FlowCapture struct {
 	Reason string `json:"reason,omitempty"`
 	// Server is the Hubble Relay address the capture came from.
 	Server string `json:"server,omitempty"`
+	// Source records HOW the window was observed, which decides how much the
+	// absence of an edge is worth. The two differ by orders of magnitude and
+	// must never be confused for one another.
+	Source FlowSourceKind `json:"source,omitempty"`
 	// Window is the requested look-back (e.g. "15m"); From/To its bounds.
 	Window string    `json:"window"`
 	From   time.Time `json:"from,omitzero"`
 	To     time.Time `json:"to,omitzero"`
-	// OldestFlow is the earliest event actually returned. When it is
-	// noticeably later than From, the ring buffer did not cover the full
-	// window and absence of an edge means "not observed", not "did not
-	// happen" — even more than usual.
+	// Watched is how much of the window was actually observed, and Coverage
+	// the same as a fraction of it (0..1).
+	//
+	// These exist because the polled source systematically lies without them.
+	// Hubble's event buffer is bounded by CAPACITY, not time (4095 events per
+	// agent by default), so on a busy cluster a request for 15m of history is
+	// answered with whatever few seconds still fit — and the reply carries no
+	// hint that it fell short. A poller then reports 15m of observation having
+	// watched perhaps 1% of it. Coverage makes that shortfall impossible to
+	// miss; a streamed capture reports the truth from the other direction.
+	Watched  string  `json:"watched,omitempty"`
+	Coverage float64 `json:"coverage,omitempty"`
+	// OldestFlow is the earliest moment this capture can speak for. When it is
+	// noticeably later than From, absence of an edge means "not observed", not
+	// "did not happen" — even more than usual.
 	OldestFlow time.Time `json:"oldestFlow,omitzero"`
 	// FlowsSeen counts raw flow events consumed before aggregation.
 	// Skipped counts events ignored as noise: neither endpoint resolvable
@@ -137,6 +152,22 @@ type FlowCapture struct {
 	LostEvents int        `json:"lostEvents,omitempty"`
 	Edges      []FlowEdge `json:"edges"`
 }
+
+// FlowSourceKind names how a FlowCapture was obtained.
+type FlowSourceKind string
+
+const (
+	// FlowSourceBuffer is a single point-in-time read of Hubble's event
+	// buffer. It is all a one-shot command can do — there is no process to
+	// keep listening — and on a busy cluster it sees only the last few
+	// seconds however long a window it asks for. Treat its silences as
+	// meaningless: it was barely looking.
+	FlowSourceBuffer FlowSourceKind = "buffer"
+	// FlowSourceStream is accumulated from a continuous follow-mode stream.
+	// Its window means what it says, and at high coverage the absence of an
+	// edge is genuine evidence that the edge went unused.
+	FlowSourceStream FlowSourceKind = "stream"
+)
 
 // FlowPeer identifies one side of an observed flow at the same granularity
 // as Workload: resolved controller identity when known. Exactly one of

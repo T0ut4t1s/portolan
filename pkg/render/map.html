@@ -54,6 +54,13 @@
   .seg button + button{border-left:1px solid var(--line-2);}
   .seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600;}
   .setabout{padding:7px 8px 2px;font-size:.72rem;color:var(--faint);}
+  /* Coverage line under the capture window. It is the honest half of the
+     control: a window you can pick means nothing without knowing how much of
+     it was actually watched. Amber when short — that is the case where an
+     unobserved edge must NOT be read as an unused one. */
+  .setnote{padding:2px 8px 4px;font-size:.7rem;color:var(--faint);line-height:1.45;}
+  .setnote.warn{color:var(--world);}
+  .seg button[disabled]{opacity:.45;cursor:progress;}
   .setabout a{color:var(--accent);text-decoration:none;}
   .titleblock{display:flex;flex-direction:column;gap:3px;}
   .meta b{color:var(--ink-2);font-weight:600;}
@@ -502,6 +509,22 @@
       <h5>map</h5>
       <label class="setrow" title="the aggregate namespace-to-namespace arrows in the default overview"><span>overview traffic arrows</span><input type="checkbox" id="set-arrows" checked></label>
       <label class="setrow" title="animate observed-traffic edges (also respects your OS reduced-motion setting)"><span>animations</span><input type="checkbox" id="set-anim" checked></label>
+      <!-- Capture window: how far back the observed-traffic overlay reaches.
+           Only shown when the server is actually accumulating flows — a static
+           map file has one window baked in and nothing to switch between. -->
+      <div class="setdiv" id="win-div" hidden></div>
+      <div id="win-sec" hidden>
+        <h5>capture window</h5>
+        <div class="setrow"><span>observed traffic over</span>
+          <span class="seg" id="win-seg">
+            <button type="button" data-window="15m">15m</button>
+            <button type="button" data-window="1h">1h</button>
+            <button type="button" data-window="6h">6h</button>
+            <button type="button" data-window="24h">24h</button>
+            <button type="button" data-window="7d">7d</button>
+          </span></div>
+        <div class="setnote" id="win-note"></div>
+      </div>
       <div class="setdiv"></div>
       <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
     </div>
@@ -707,30 +730,38 @@ const UI = __PORTOLAN_UI__;
   // ---------- flow overlay indexes ----------
   // FLOWS is observation, not policy: what the datapath did in the capture
   // window, at the same node granularity as the declared edges.
-  const FLOWS = DATA.flows && DATA.flows.status === "ok" ? DATA.flows : null;
+  //
+  // It is `let`, and the indexes below are rebuilt rather than rebound,
+  // because the capture window is a live control: picking 24h re-queries the
+  // server and swaps the whole overlay under the same map.
+  let FLOWS = DATA.flows && DATA.flows.status === "ok" ? DATA.flows : null;
   const obsByKey = new Map();      // "s|d" -> observed edge (forwarded)
   const ghostsByNode = new Map();  // node -> observed-but-undeclared edges
   const dropsByNode = new Map();   // node -> drops
   const dropPairs = new Map();     // "s|d" -> drops
-  if (FLOWS) {
-    (FLOWS.observed || []).forEach(o => {
-      obsByKey.set(o.s + "|" + o.d, o);
-      if (!o.dec) [o.s, o.d].forEach(id => {
-        if (!ghostsByNode.has(id)) ghostsByNode.set(id, []);
-        ghostsByNode.get(id).push(o);
+  function rebuildFlowIndexes(){
+    obsByKey.clear(); ghostsByNode.clear(); dropsByNode.clear(); dropPairs.clear();
+    if (FLOWS) {
+      (FLOWS.observed || []).forEach(o => {
+        obsByKey.set(o.s + "|" + o.d, o);
+        if (!o.dec) [o.s, o.d].forEach(id => {
+          if (!ghostsByNode.has(id)) ghostsByNode.set(id, []);
+          ghostsByNode.get(id).push(o);
+        });
       });
-    });
-    (FLOWS.drops || []).forEach(d => {
-      const k = d.s + "|" + d.d;
-      if (!dropPairs.has(k)) dropPairs.set(k, []);
-      dropPairs.get(k).push(d);
-      [d.s, d.d].forEach(id => {
-        if (!dropsByNode.has(id)) dropsByNode.set(id, []);
-        dropsByNode.get(id).push(d);
+      (FLOWS.drops || []).forEach(d => {
+        const k = d.s + "|" + d.d;
+        if (!dropPairs.has(k)) dropPairs.set(k, []);
+        dropPairs.get(k).push(d);
+        [d.s, d.d].forEach(id => {
+          if (!dropsByNode.has(id)) dropsByNode.set(id, []);
+          dropsByNode.get(id).push(d);
+        });
       });
-    });
-    document.querySelectorAll(".flows-legend").forEach(el => el.hidden = false);
+    }
+    document.querySelectorAll(".flows-legend").forEach(el => el.hidden = !FLOWS);
   }
+  rebuildFlowIndexes();
   const obsFor = (s, d) => obsByKey.get(s + "|" + d);
   const fmtDur = ms => {
     const s = Math.max(0, Math.round(ms / 1000));
@@ -758,7 +789,7 @@ const UI = __PORTOLAN_UI__;
   // Provenance subtitle: labeled values one step below the title, with a
   // staleness signal — a dashboard quietly serving old data is the worst
   // failure mode, so the capture time turns amber past 3 collection cycles.
-  {
+  function renderMeta(){
     const parts = [];
     if (DATA.cluster) parts.push("cluster <b>" + esc(DATA.cluster) + "</b>");
     const age = Date.now() - new Date(DATA.takenAt.replace(" UTC", "Z").replace(" ", "T"));
@@ -766,35 +797,51 @@ const UI = __PORTOLAN_UI__;
     parts.push("captured <b>" + esc(DATA.takenAt) + "</b>" +
       (stale ? ' <span class="stale">— stale (' + fmtDur(age) + ' old)</span>' : ""));
     if (FLOWS) {
-      // Coverage honesty: Hubble's ring buffer may hold far less than the
-      // requested window — say how much of it traffic was actually seen over.
-      const held = FLOWS.oldestFlow ? fmtDur(new Date(FLOWS.to) - new Date(FLOWS.oldestFlow)) : null;
-      parts.push("flows <b>" + esc(FLOWS.window) + "</b>" + (held ? " (buffer held " + held + ")" : ""));
+      // Coverage honesty, and the reason this whole subsystem was rewritten.
+      //
+      // A "buffer" capture is one read of Hubble's event buffer, which is
+      // bounded by CAPACITY, not time — so on a busy cluster it holds seconds
+      // no matter how long a window was asked for. Saying "flows 15m" over
+      // twelve seconds of data is the single most misleading thing this map
+      // could do: it invites you to read an absent edge as "unused" when the
+      // truth is "we blinked". So when coverage is short, say so, in the
+      // header, in amber, every time.
+      let s = "flows <b>" + esc(FLOWS.window) + "</b>";
+      const cov = FLOWS.coverage || 0;
+      if (FLOWS.source === "buffer" || cov < 0.98) {
+        s += ' <span class="stale">— only ' + esc(FLOWS.watched || "?") + " watched ("
+           + Math.round(cov * 100) + "% covered)</span>";
+      }
+      parts.push(s);
     }
     $("#meta").innerHTML = parts.join(" · ");
   }
+  renderMeta();
   $("#tool").textContent = DATA.tool;
   const half = DATA.edges.filter(halfOpen).length;
-  const dropCount = FLOWS ? FLOWS.drops.length : 0;
-  // The stats row is now a passive READ strip: facts you glance at, never
-  // click. Findings (half-open, drops) appear here as readouts; the map
-  // overlay for them lives in the Display menu. This kills the old surprise
-  // where clicking a "stat" silently filtered the board.
-  const reads = [
-    [DATA.stats.namespaces, "namespaces"],
-    [DATA.stats.workloads, "workloads"],
-    [DATA.stats.policies, "policies"],
-    ["sep"],
-    [DATA.stats.edges, "allow edges"],
-    [DATA.stats.crossEdges, "cross-namespace"],
-  ];
-  if (FLOWS) reads.push([FLOWS.observed.length, "observed edges"]);
-  reads.push(["sep"], [half, "half-open", "warn"]);
-  if (FLOWS) reads.push([dropCount, "observed drops", dropCount ? "bad" : ""]);
-  $("#stats").className = "readstrip";
-  $("#stats").innerHTML = reads.map(r => r[0] === "sep"
-    ? `<span class="sep"></span>`
-    : `<span class="r${r[2] ? " " + r[2] : ""}"><b>${r[0]}</b> ${r[1]}</span>`).join("");
+  const dropCount = () => FLOWS ? FLOWS.drops.length : 0;
+  // The stats row is a passive READ strip: facts you glance at, never click.
+  // Findings (half-open, drops) appear here as readouts; the map overlay for
+  // them lives in the Display menu. This kills the old surprise where clicking
+  // a "stat" silently filtered the board.
+  function renderReadStrip(){
+    const reads = [
+      [DATA.stats.namespaces, "namespaces"],
+      [DATA.stats.workloads, "workloads"],
+      [DATA.stats.policies, "policies"],
+      ["sep"],
+      [DATA.stats.edges, "allow edges"],
+      [DATA.stats.crossEdges, "cross-namespace"],
+    ];
+    if (FLOWS) reads.push([FLOWS.observed.length, "observed edges"]);
+    reads.push(["sep"], [half, "half-open", "warn"]);
+    if (FLOWS) reads.push([dropCount(), "observed drops", dropCount() ? "bad" : ""]);
+    $("#stats").className = "readstrip";
+    $("#stats").innerHTML = reads.map(r => r[0] === "sep"
+      ? `<span class="sep"></span>`
+      : `<span class="r${r[2] ? " " + r[2] : ""}"><b>${r[0]}</b> ${r[1]}</span>`).join("");
+  }
+  renderReadStrip();
   if (DATA.flows && DATA.flows.status !== "ok") {
     DATA.warnings = (DATA.warnings || []).concat(
       ["flow capture failed (" + DATA.flows.reason + ") — map shows declared policy only"]);
@@ -1287,7 +1334,10 @@ const UI = __PORTOLAN_UI__;
   // ext id → namespaces it touches; lets the search filter keep an
   // external only while a namespace it links to is still on screen.
   const extNSIndex = new Map();
-  {
+  // Rebuilt on a window change: a wider look-back can tie an external to a
+  // namespace the shorter one never saw talk to it.
+  function rebuildExtNSIndex(){
+    extNSIndex.clear();
     const touch = (a, b) => {
       if (!extById.has(a)) return;
       const n = nodeNS(b);
@@ -1301,6 +1351,7 @@ const UI = __PORTOLAN_UI__;
       (FLOWS.drops || []).forEach(o => { touch(o.s, o.d); touch(o.d, o.s); });
     }
   }
+  rebuildExtNSIndex();
 
   // Card visibility = search filter ∩ focus contraction. Hover only dims
   // (no layout shift under the cursor); pinning contracts the grid to the
@@ -2029,8 +2080,88 @@ const UI = __PORTOLAN_UI__;
     }
   });
   $("#lens-half-n").textContent = half;
-  if (FLOWS) $("#lens-drop-n").textContent = dropCount;
-  else $("#lens-drop-row").style.display = "none";
+  function syncFlowCounts(){
+    if (FLOWS) { $("#lens-drop-n").textContent = dropCount(); $("#lens-drop-row").style.display = ""; }
+    else $("#lens-drop-row").style.display = "none";
+  }
+  syncFlowCounts();
+
+  // ---------- capture window ----------
+  // How far back the observed-traffic overlay reaches.
+  //
+  // This is a query against the server's accumulated observations, NOT a fresh
+  // read of Hubble. That distinction is the whole feature: Hubble's event
+  // buffer is bounded by capacity rather than time, so re-asking it for 24h
+  // would hand back the same handful of seconds as 15m and every window would
+  // look identical. Only a process that has been listening all along can
+  // answer "what talked to what today".
+  //
+  // A static map file has one window baked in and no server to ask, so the
+  // control hides itself rather than offering a choice it cannot honour.
+  let winSeq = 0;
+  const winSec = $("#win-sec"), winDiv = $("#win-div"), winSeg = $("#win-seg"), winNote = $("#win-note");
+  // Only the streaming source can span windows; "buffer" means a one-shot read.
+  const winCapable = !!FLOWS && FLOWS.source === "stream";
+  let curWindow = FLOWS ? FLOWS.window : null;
+
+  function syncWindowUI(busy, err){
+    winSec.hidden = winDiv.hidden = !winCapable;
+    if (!winCapable) return;
+    winSeg.querySelectorAll("[data-window]").forEach(b => {
+      b.setAttribute("aria-pressed", String(b.dataset.window === curWindow));
+      b.disabled = !!busy;
+    });
+    if (err) { winNote.className = "setnote warn"; winNote.textContent = err; return; }
+    if (busy) { winNote.className = "setnote"; winNote.textContent = "loading…"; return; }
+    // Always state the coverage actually achieved. A window is only worth what
+    // was watched of it, and a quiet 40%-covered day must not read as a quiet
+    // day.
+    const cov = Math.round((FLOWS.coverage || 0) * 100);
+    winNote.className = "setnote" + (cov < 98 ? " warn" : "");
+    winNote.textContent = cov >= 98
+      ? "watched " + (FLOWS.watched || "?") + " of it — " + cov + "% covered"
+      : "only " + (FLOWS.watched || "?") + " of this window was watched (" + cov +
+        "% covered) — an edge missing here may just be one we did not see";
+  }
+
+  async function setWindow(w){
+    if (w === curWindow) return;
+    const seq = ++winSeq;
+    syncWindowUI(true, null);
+    let ov;
+    try {
+      // Relative URL, like the what-if calls: a file:// render then fails the
+      // fetch and says so, instead of reaching for some other origin.
+      const resp = await fetch("api/flows?window=" + encodeURIComponent(w));
+      if (seq !== winSeq) return;             // superseded by a later click
+      if (!resp.ok) { syncWindowUI(false, (await resp.text()).trim().slice(0, 160) || ("HTTP " + resp.status)); return; }
+      ov = await resp.json();
+    } catch {
+      if (seq !== winSeq) return;
+      syncWindowUI(false, "changing the window needs the dashboard (portolan serve) — a static map file has one window baked in");
+      return;
+    }
+    if (seq !== winSeq) return;
+
+    // Swap the overlay wholesale and rebuild everything derived from it. The
+    // policy graph does not move: only what the datapath was seen to do.
+    FLOWS = ov && ov.status === "ok" ? ov : null;
+    curWindow = w;
+    rebuildFlowIndexes();
+    rebuildExtNSIndex();
+    renderMeta();
+    renderReadStrip();
+    syncFlowCounts();
+    syncWindowUI(false, null);
+    if (auditMode) renderAudit(); else if (!pinned && !queryPair && !focusNS && !wifOn) inspectHome();
+    redraw();
+  }
+
+  winSeg.addEventListener("click", e => {
+    const b = e.target.closest("[data-window]");
+    if (b && !b.disabled) setWindow(b.dataset.window);
+  });
+  syncWindowUI(false, null);
 
   // findingFilter stays the single source of truth (null | "half" | "drops" |
   // "audit"); the two checkboxes drive it, and syncLensUI reflects it back so

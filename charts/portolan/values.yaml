@@ -10,12 +10,29 @@ keep: 500
 # Optional label recorded in every snapshot (shown in the map header).
 clusterName: ""
 
-# Optional Hubble flow observation. When window is set (e.g. "15m"), each
-# collection cycle also reads that look-back of flows from Hubble Relay and
-# records aggregated observed edges (incl. drops) in the snapshot. Needs
-# network reach to the relay — with default-deny egress, allow
-# kube-system/hubble-relay:4245. Coverage is bounded by Hubble's ring
-# buffer; the snapshot's flows.oldestFlow field reports the actual span.
+# Optional Hubble flow observation — what the datapath actually DID, drawn over
+# what policy permits. Needs network reach to the relay: with default-deny
+# egress, allow kube-system/hubble-relay:4245.
+#
+# Serve mode STREAMS. It holds a follow-mode connection to Hubble open and
+# accumulates observed edges into a rolling store on the data volume, so
+# `window` is a query over what was really seen — not a request to Hubble.
+#
+# That distinction is the whole design. Cilium's event buffer is bounded by
+# CAPACITY, not time (4095 events per agent by default), so on a busy cluster it
+# holds seconds. Asking it for "the last 15 minutes" returns the last few
+# seconds and says nothing about the shortfall — a poller on a 15m cycle
+# therefore watches ~1% of the traffic and reports it as though it had seen the
+# lot. Periodic traffic (a CronJob, a backup, a nightly sync) falls between the
+# samples and is simply invisible. Streaming is the only way `window` can mean
+# what it says, and every capture reports the coverage it actually achieved.
+#
+# window is the look-back the map OPENS on; viewers can switch it (15m…7d) from
+# the Settings menu. Observations are retained for 7 days.
+#
+# Requires persistence (below): the store lives on the data volume, so the
+# window survives a restart. With persistence off it starts empty on every
+# restart, which for a 24h window means 24h of blindness after each rollout.
 flows:
   window: ""
   server: "hubble-relay.kube-system.svc.cluster.local:80"

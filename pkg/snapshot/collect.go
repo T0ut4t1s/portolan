@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -69,6 +70,14 @@ var churnLabels = []string{
 type Collector struct {
 	dyn  dynamic.Interface
 	meta metadata.Interface
+
+	// podIdx is the live pod→controller index from the most recent Collect,
+	// published so a long-lived flow stream can resolve peers as flows ARRIVE.
+	// Timing is the whole point: a pod that has since died cannot be resolved
+	// after the fact, so the streaming accumulator must ask the index that was
+	// current when the flow was seen, not the one current at snapshot time.
+	idxMu  sync.RWMutex
+	podIdx map[nsName]workloadRef
 }
 
 // NewCollector builds a Collector from a rest.Config.
@@ -140,6 +149,10 @@ func (c *Collector) Collect(ctx context.Context, flows FlowOptions) (*Snapshot, 
 		return nil, err
 	}
 
+	c.idxMu.Lock()
+	c.podIdx = podIdx
+	c.idxMu.Unlock()
+
 	snap.Namespaces = nss
 	snap.Workloads = wls
 	snap.Sources = statuses
@@ -151,23 +164,39 @@ func (c *Collector) Collect(ctx context.Context, flows FlowOptions) (*Snapshot, 
 	sortSnapshot(snap)
 
 	if flows.Window > 0 {
-		resolve := func(namespace, pod string) (string, string, bool) {
-			ref, ok := podIdx[nsName{namespace, pod}]
-			return ref.kind, ref.name, ok
+		var (
+			fc  *FlowCapture
+			err error
+		)
+		if flows.Source != nil {
+			// A long-lived listener already holds the window; ask it. This is
+			// the only way the window can mean what it says — see FlowSource.
+			fc, err = flows.Source.Capture(ctx, flows.Window)
+		} else {
+			fc, err = collectFlows(ctx, flows, c.Resolve)
 		}
-		fc, err := collectFlows(ctx, flows, resolve)
 		if err != nil {
 			fc = &FlowCapture{
 				Status: "error",
 				Reason: err.Error(),
 				Server: flows.Server,
-				Window: flows.Window.String(),
+				Window: ShortDur(flows.Window),
 				Edges:  []FlowEdge{},
 			}
 		}
 		snap.Flows = fc
 	}
 	return snap, nil
+}
+
+// Resolve maps a pod to its controller identity using the index from the most
+// recent Collect, and reports whether it was found. It is safe for concurrent
+// use — the flow stream calls it from its own goroutine, continuously.
+func (c *Collector) Resolve(namespace, pod string) (kind, name string, ok bool) {
+	c.idxMu.RLock()
+	defer c.idxMu.RUnlock()
+	ref, ok := c.podIdx[nsName{namespace, pod}]
+	return ref.kind, ref.name, ok
 }
 
 func totalLen(groups [][]Policy) int {

@@ -43,9 +43,12 @@ where the two disagree.
   **live flows it would break** — computed by *Cilium's own policy engine*
   linked in-process, not a reimplementation. Millions of pair/port verdicts in
   seconds.
-- 👁️ **Declared vs. observed, joined.** Overlay a bounded Hubble window: declared
-  edges that carried real traffic animate; undeclared traffic draws as ghosts;
-  denials draw red. Observed and declared join on the same workload identities.
+- 👁️ **Declared vs. observed, joined.** Serve mode streams Hubble continuously
+  into a rolling store, so you can ask what really talked to what over the last
+  15 minutes — or the last 7 days. Declared edges that carried real traffic
+  animate; undeclared traffic draws as ghosts; denials draw red. Observed and
+  declared join on the same workload identities, and every window states the
+  coverage it achieved.
 - 🔒 **Read-only by design.** `get`/`list`/`watch` only — it never writes to your
   cluster. Authoring output is YAML for *you* to review and commit.
 
@@ -93,13 +96,24 @@ dozens of namespaces, nobody holds that chart in their head — Portolan draws i
 - **Diff** — `portolan diff old.json new.json` compares two snapshots:
   policies added/removed/changed and the derived allow-edges that appeared or
   vanished. `--exit-code` for pipelines.
-- **Observe** — `--flows 15m` reads a bounded look-back window from Hubble
-  Relay and records what the datapath actually did, aggregated to workload
-  granularity: observed edges, verdicts, and drop reasons (`POLICY_DENIED`
-  drops are misconfiguration leads). Flow peers resolve to the same
-  controller identities the policy map draws, so observed and declared edges
-  join cleanly. Honesty metadata included: if Hubble's ring buffer covered
-  less than the requested window, `flows.oldestFlow` says so.
+- **Observe** — `--flows 24h` records what the datapath actually did, aggregated
+  to workload granularity: observed edges, verdicts, and drop reasons
+  (`POLICY_DENIED` drops are misconfiguration leads). Flow peers resolve to the
+  same controller identities the policy map draws, so observed and declared
+  edges join cleanly.
+
+  **`serve` streams; one-shot commands sample.** Serve mode holds a follow-mode
+  Hubble stream open and accumulates into a rolling store, so the window is a
+  query over what was genuinely watched, switchable from 15m to 7d in the map's
+  Settings. A one-shot `portolan snapshot --flows 15m` has no process to listen
+  with, so it can only read Hubble's event buffer — which is bounded by
+  *capacity, not time* and on a busy cluster holds **seconds**, however long a
+  window you ask for.
+
+  Every capture therefore reports `flows.source` (`stream` or `buffer`) and
+  `flows.coverage` — the fraction of the window actually observed. Read them.
+  At low coverage an absent edge means "we blinked", not "unused"; at high
+  coverage on a streamed window, it is real evidence.
 
   On the map, observation becomes texture: declared edges that carried real
   traffic **animate**; traffic with no per-pair declared edge (riding a
@@ -364,12 +378,19 @@ reimplementation or a guess.
 
 ### Trustworthy observation
 
-- **Continuous flow accumulation** *(planned)* — today's flow overlay is a single
-  point-in-time read of Hubble's ring buffer, which often holds far less than the
-  window you asked for. Serve mode will instead *stream* and accumulate observed
-  edges into a rolling store, so "observed" reflects a real 24h/7d window —
-  periodic and rare traffic included. Robust half-open and drop detection depends
-  on this.
+- **Continuous flow accumulation** *(available)* — serve mode holds a follow-mode
+  Hubble stream open and accumulates observed edges into a rolling store, so a
+  24h or 7d window means what it says. Pick the window from the map's Settings
+  menu; every capture reports the coverage it actually achieved.
+
+  This replaced polling, which could not work. Cilium's event buffer is bounded
+  by **capacity, not time** (4095 events per agent by default), so on a busy
+  cluster it holds *seconds* — asking it for "the last 15 minutes" returns the
+  last few seconds and says nothing about the shortfall. A collector polling it
+  every 15 minutes watched roughly **1% of the traffic** and reported it as
+  though it had seen all of it. Anything periodic — a CronJob, a backup, a
+  nightly sync — fell between the samples and was invisible. Trustworthy
+  half-open and drop detection depends on having actually been listening.
 
 ### Access
 
@@ -408,8 +429,7 @@ stays a read-only instrument.
   `whatif --fail-on-break` already gate pipelines; package them as a GitHub Action
   and a GitLab template so policy-drift and blast-radius checks drop in.
 
-Smaller near-term polish: clearer wording for the *unmatched selectors* audit lens,
-and an interactive capture-window control in Settings.
+Smaller near-term polish: clearer wording for the *unmatched selectors* audit lens.
 
 Have a use case that isn't here? Open an issue — the schema and the evaluator
 interface are designed to be extended, not rewritten.
