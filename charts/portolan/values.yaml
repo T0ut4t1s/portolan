@@ -68,15 +68,34 @@ flows:
 # Rotating session-key invalidates every live session at once (stateless
 # cookies have no server-side revocation).
 auth:
-  mode: none          # none | local | oidc
+  # Sign-in methods, and they compose. The five configurations:
+  #
+  #   mode: none                     1. open — no sign-in at all
+  #   mode: local                    2. username and password
+  #   mode: oidc                     3. SSO, reached from a sign-in button
+  #   mode: oidc  + autoRedirect     4. SSO, straight through — no login page
+  #   mode: [local, oidc]            5. both, on one card
+  #
+  # (5) is the break-glass pattern: SSO for every day, and a password that still
+  # works when the identity provider is the thing that's broken. It is also a
+  # permanently attached weaker credential that bypasses the OIDC allowlist — so
+  # give it one account, a long random password, and no daily use.
+  mode: none
   sessionTTL: 12h
-  existingSecret: ""  # name of the Secret above; required when mode is not none
+  existingSecret: ""  # name of the Secret above; required unless mode is none
 
   oidc:
     # Issuer must match the `iss` claim the provider puts in its tokens, to the
     # character (Authentik includes the trailing slash).
     issuer: ""
     redirectURL: ""
+
+    # Skip the login page and go straight to the provider. With SSO the only way
+    # in there is nothing to choose, so the card is a click that buys nothing.
+    # It still appears when it has something to say — after a sign-out, or to
+    # explain a rejection — and it cannot be combined with local login, which it
+    # would hide (the chart refuses that combination rather than guess).
+    autoRedirect: false
 
     # Optional. Leave empty and the client id comes from the Secret's client_id
     # key, beside the client secret. Set it here to keep it in values instead.

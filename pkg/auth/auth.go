@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,13 +60,22 @@ const (
 
 // Config is the resolved auth configuration for serve mode.
 type Config struct {
-	Mode Mode
-	// SessionKey must be exactly 32 bytes (AES-256) when Mode != none.
+	// Modes are the sign-in methods offered, and they compose: [oidc, local]
+	// puts both on one card. Empty (or [none]) means no auth at all. The methods
+	// differ only in how a session is earned; the session itself is the same.
+	//
+	// Running local beside oidc is the break-glass pattern every mature admin
+	// tool ships (Grafana, ArgoCD, Vault): the emergency way in must not route
+	// through the system that may itself be broken. It is also a permanently
+	// attached weaker credential that bypasses the OIDC allowlist — so it wants
+	// exactly one account, a long random password, and no daily use.
+	Modes []Mode
+	// SessionKey must be exactly 32 bytes (AES-256) when any mode authenticates.
 	SessionKey []byte
 	SessionTTL time.Duration
 	// Users maps username -> bcrypt hash (local mode).
 	Users map[string]string
-	// OIDC configures mode oidc.
+	// OIDC configures the oidc mode.
 	OIDC *OIDCConfig
 	// Insecure drops the cookie Secure flag — for plain-HTTP local testing
 	// only. In production the browser⇔proxy leg is HTTPS, so leave this false
@@ -74,14 +84,18 @@ type Config struct {
 }
 
 // Authenticator enforces a Config: it gates a handler and serves the login
-// endpoints. The zero-value modes (none) pass everything through.
+// endpoints. With no authenticating mode it passes everything through.
 type Authenticator struct {
 	cfg       Config
 	aead      cipher.AEAD
+	local     bool        // username/password enabled
 	dummyHash []byte      // constant-time decoy for unknown users (defeats enumeration timing)
-	oidc      *oidcClient // nil unless Mode is oidc
+	oidc      *oidcClient // nil unless oidc is enabled
 	tmpl      *loginTemplate
 }
+
+// has reports whether m is among the configured modes.
+func (c Config) has(m Mode) bool { return slices.Contains(c.Modes, m) }
 
 // New validates cfg and builds an Authenticator. In mode "none" it returns a
 // pass-through. Otherwise it fails closed on any misconfiguration — a
@@ -92,15 +106,23 @@ type Authenticator struct {
 // background refresh of the provider's signing keys, so pass one that lives as
 // long as the server.
 func New(ctx context.Context, cfg Config) (*Authenticator, error) {
-	if cfg.Mode == "" {
-		cfg.Mode = ModeNone
-	}
-	if cfg.Mode == ModeNone {
+	// Normalize: no modes, or an explicit none, means the map is served open.
+	// `none` is not a mode you can combine with a real one — that would be a
+	// config that reads as "auth, sometimes".
+	cfg.Modes = slices.DeleteFunc(cfg.Modes, func(m Mode) bool { return m == "" })
+	if len(cfg.Modes) == 0 || slices.Contains(cfg.Modes, ModeNone) {
+		if len(cfg.Modes) > 1 {
+			return nil, fmt.Errorf("auth: mode none cannot be combined with %v", cfg.Modes)
+		}
+		cfg.Modes = nil
 		return &Authenticator{cfg: cfg}, nil
 	}
-	if cfg.Mode != ModeLocal && cfg.Mode != ModeOIDC {
-		return nil, fmt.Errorf("auth: unknown mode %q", cfg.Mode)
+	for _, m := range cfg.Modes {
+		if m != ModeLocal && m != ModeOIDC {
+			return nil, fmt.Errorf("auth: unknown mode %q", m)
+		}
 	}
+
 	if len(cfg.SessionKey) != sessionKeyLen {
 		return nil, fmt.Errorf("auth: session key must be %d bytes, got %d", sessionKeyLen, len(cfg.SessionKey))
 	}
@@ -117,8 +139,9 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 	}
 	a := &Authenticator{cfg: cfg, aead: aead, tmpl: loginTmpl()}
 
-	switch cfg.Mode {
-	case ModeLocal:
+	// Every enabled mode must be wholly valid. A half-configured auth fails
+	// closed here, before the listener binds, rather than at someone's login.
+	if cfg.has(ModeLocal) {
 		if len(cfg.Users) == 0 {
 			return nil, errors.New("auth: mode local requires at least one user")
 		}
@@ -128,10 +151,18 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 		if err != nil {
 			return nil, fmt.Errorf("auth: %w", err)
 		}
-		a.dummyHash = dummy
-	case ModeOIDC:
+		a.local, a.dummyHash = true, dummy
+	}
+	if cfg.has(ModeOIDC) {
 		if cfg.OIDC == nil {
 			return nil, errors.New("auth: mode oidc requires OIDC configuration")
+		}
+		// Auto-redirect skips the login card entirely. With local also enabled
+		// that would hide the password form — leaving no way to reach it. That is
+		// a contradiction, not a preference, so say so instead of quietly picking
+		// a winner.
+		if cfg.OIDC.AutoRedirect && a.local {
+			return nil, errors.New("auth: oidc auto-redirect cannot be used alongside local login — it would hide the password form")
 		}
 		oc, err := newOIDCClient(ctx, cfg.OIDC)
 		if err != nil {
@@ -143,7 +174,10 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 }
 
 // Enabled reports whether any auth mode is active.
-func (a *Authenticator) Enabled() bool { return a.cfg.Mode != ModeNone }
+func (a *Authenticator) Enabled() bool { return len(a.cfg.Modes) > 0 }
+
+// Modes lists the active sign-in methods, for logging.
+func (a *Authenticator) Modes() []Mode { return a.cfg.Modes }
 
 // ---- stateless session token ----
 
@@ -271,10 +305,10 @@ func (a *Authenticator) Register(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /login", a.loginForm)
-	switch a.cfg.Mode {
-	case ModeLocal:
+	if a.local {
 		mux.HandleFunc("POST /login", a.loginSubmit)
-	case ModeOIDC:
+	}
+	if a.oidc != nil {
 		mux.HandleFunc("GET /auth/login", a.oidcStart)
 		mux.HandleFunc("GET /auth/callback", a.oidcCallback)
 	}
@@ -284,22 +318,37 @@ func (a *Authenticator) Register(mux *http.ServeMux) {
 }
 
 func (a *Authenticator) loginForm(w http.ResponseWriter, r *http.Request) {
-	next := safeNext(r.URL.Query().Get("next"))
+	q := r.URL.Query()
+	next := safeNext(q.Get("next"))
 	if a.user(r) != "" { // already logged in
 		http.Redirect(w, r, next, http.StatusFound)
 		return
 	}
 	v := loginView{
 		Next:  next,
-		Error: errMessage(r.URL.Query().Get("err")),
+		Local: a.local,
+		Error: errMessage(q.Get("err")),
 	}
-	if r.URL.Query().Get("signedout") != "" {
+	if q.Get("signedout") != "" {
 		v.Note = "You have been signed out."
 	}
-	if a.cfg.Mode == ModeOIDC {
+	if a.oidc != nil {
 		v.OIDC = true
 		v.Provider = a.oidc.name
 		v.StartURL = "/auth/login?next=" + url.QueryEscape(next)
+
+		// Auto-redirect: with a single sign-in method there is nothing to choose,
+		// so don't make the viewer click through a card to reach it.
+		//
+		// Except when the card has something to say. Redirecting after a sign-out
+		// would bounce straight back through a live SSO session and silently sign
+		// the viewer back in — sign-out would look broken. Redirecting on an error
+		// would spin: a viewer the allowlist rejects would be sent to the provider,
+		// authenticated, rejected, and sent again, forever.
+		if a.oidc.cfg.AutoRedirect && v.Error == "" && v.Note == "" {
+			http.Redirect(w, r, v.StartURL, http.StatusFound)
+			return
+		}
 	}
 	a.tmpl.render(w, v)
 }

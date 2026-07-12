@@ -18,16 +18,17 @@ func loginTmpl() *loginTemplate {
 	return &loginTemplate{t: template.Must(template.New("login").Parse(loginHTML))}
 }
 
-// loginView is what the card renders. In oidc mode the password fields give way
-// to a single button: the card stays because sign-out has to land somewhere
-// that does not immediately bounce back through a still-live SSO session, and
-// because a rejection needs somewhere to be explained.
+// loginView is what the card renders. The sign-in methods compose: Local puts up
+// the password form, OIDC the provider button, and both together stack them with
+// a divider. Exactly one of them is always true — an Authenticator with neither
+// serves no login page at all.
 type loginView struct {
 	Next     string
 	Error    string // fixed copy from errMessage; empty for none
 	Note     string // neutral notice, e.g. after signing out
-	OIDC     bool
-	Provider string // display name for the sign-in button
+	Local    bool   // show the username/password form
+	OIDC     bool   // show the provider button
+	Provider string // display name for that button
 	StartURL string // begins the authorization-code flow
 }
 

@@ -75,11 +75,12 @@ type authFlags struct {
 	oidcAllowedEmails  string
 	oidcAllowAny       bool
 	oidcProviderName   string
+	oidcAutoRedirect   bool
 }
 
 func registerAuthFlags(fs *flag.FlagSet) *authFlags {
 	f := &authFlags{}
-	fs.StringVar(&f.mode, "auth-mode", envOr("PORTOLAN_AUTH_MODE", "none"), "authentication: none | local | oidc")
+	fs.StringVar(&f.mode, "auth-mode", envOr("PORTOLAN_AUTH_MODE", "none"), "sign-in methods, comma-separated: none | local | oidc | oidc,local")
 	fs.StringVar(&f.sessionKey, "auth-session-key", os.Getenv("PORTOLAN_AUTH_SESSION_KEY"), "32-byte session key (base64 or hex); required when auth is enabled")
 	fs.StringVar(&f.usersFile, "auth-users-file", os.Getenv("PORTOLAN_AUTH_USERS_FILE"), "htpasswd-style users file (username:bcrypthash per line) for local auth")
 	fs.DurationVar(&f.sessionTTL, "auth-session-ttl", 12*time.Hour, "session lifetime")
@@ -96,19 +97,24 @@ func registerAuthFlags(fs *flag.FlagSet) *authFlags {
 	fs.StringVar(&f.oidcAllowedEmails, "auth-oidc-allowed-emails", os.Getenv("PORTOLAN_AUTH_OIDC_ALLOWED_EMAILS"), "comma-separated email addresses permitted to view the map")
 	fs.BoolVar(&f.oidcAllowAny, "auth-oidc-allow-any-authenticated", envBool("PORTOLAN_AUTH_OIDC_ALLOW_ANY_AUTHENTICATED"), "admit every account the provider authenticates (no allowlist)")
 	fs.StringVar(&f.oidcProviderName, "auth-oidc-provider-name", os.Getenv("PORTOLAN_AUTH_OIDC_PROVIDER_NAME"), "name shown on the sign-in button (default: the issuer's host)")
+	fs.BoolVar(&f.oidcAutoRedirect, "auth-oidc-auto-redirect", envBool("PORTOLAN_AUTH_OIDC_AUTO_REDIRECT"), "skip the login page and go straight to the provider (cannot be combined with local login)")
 	return f
 }
 
 // build resolves the flags into an Authenticator, failing closed on any
 // misconfiguration (mode none returns a pass-through).
 func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
-	cfg := auth.Config{Mode: auth.Mode(f.mode), SessionTTL: f.sessionTTL, Insecure: f.insecure}
-	if cfg.Mode == "" || cfg.Mode == auth.ModeNone {
-		return auth.New(ctx, cfg)
+	var modes []auth.Mode
+	for _, m := range splitList(f.mode) {
+		modes = append(modes, auth.Mode(m))
+	}
+	cfg := auth.Config{Modes: modes, SessionTTL: f.sessionTTL, Insecure: f.insecure}
+	if len(modes) == 0 || slices.Contains(modes, auth.ModeNone) {
+		return auth.New(ctx, cfg) // no auth; auth.New rejects none-plus-something
 	}
 
-	// Both authenticating modes issue the same sealed session cookie, so both
-	// need the key.
+	// Every authenticating mode issues the same sealed session cookie, so any of
+	// them needs the key.
 	if f.sessionKey == "" {
 		return nil, errors.New("auth: --auth-session-key (or PORTOLAN_AUTH_SESSION_KEY) is required when auth is enabled")
 	}
@@ -118,8 +124,7 @@ func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
 	}
 	cfg.SessionKey = key
 
-	switch cfg.Mode {
-	case auth.ModeLocal:
+	if slices.Contains(modes, auth.ModeLocal) {
 		if f.usersFile == "" {
 			return nil, errors.New("auth: local mode requires --auth-users-file (or PORTOLAN_AUTH_USERS_FILE)")
 		}
@@ -133,7 +138,8 @@ func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
 			return nil, fmt.Errorf("auth: users file: %w", err)
 		}
 		cfg.Users = users
-	case auth.ModeOIDC:
+	}
+	if slices.Contains(modes, auth.ModeOIDC) {
 		cfg.OIDC = &auth.OIDCConfig{
 			Issuer:                f.oidcIssuer,
 			BackchannelURL:        f.oidcBackchannelURL,
@@ -146,6 +152,7 @@ func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
 			AllowedEmails:         splitList(f.oidcAllowedEmails),
 			AllowAnyAuthenticated: f.oidcAllowAny,
 			ProviderName:          f.oidcProviderName,
+			AutoRedirect:          f.oidcAutoRedirect,
 		}
 	}
 	return auth.New(ctx, cfg)
@@ -350,7 +357,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	}()
 	fmt.Fprintf(os.Stderr, "serving on %s (interval %s)\n", *addr, *interval)
 	if authn.Enabled() {
-		fmt.Fprintf(os.Stderr, "auth: %s mode enabled\n", authFlags.mode)
+		fmt.Fprintf(os.Stderr, "auth: enabled — sign-in via %v\n", authn.Modes())
 	}
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

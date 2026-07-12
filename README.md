@@ -223,10 +223,31 @@ The dashboard renders, in effect, a cluster attack map — it should not be serv
 open on an untrusted network. `serve` supports opt-in sign-in; it defaults to
 `none` (open) so nothing changes for trusted-network or proxy-gated setups.
 
-Two modes authenticate: **local** (username/password) and **oidc** (your identity
-provider). Both issue the same session — a stateless, signed-and-encrypted cookie
-(AES-256-GCM), with no server-side store and no database — and both gate every
-route except `/healthz` and the login endpoints.
+Two methods authenticate — **local** (username/password) and **oidc** (your
+identity provider) — and they compose. Both issue the same session: a stateless,
+signed-and-encrypted cookie (AES-256-GCM), no server-side store, no database.
+Both gate every route except `/healthz` and the login endpoints.
+
+That gives five configurations:
+
+| `auth.mode` | | What a visitor sees |
+|---|---|---|
+| `none` | | the map, immediately — no sign-in |
+| `local` | | a username and password form |
+| `oidc` | | a **Sign in with …** button |
+| `oidc` | + `autoRedirect` | nothing — straight to your provider |
+| `[local, oidc]` | | both, on one card |
+
+The last is the **break-glass** configuration, and it's the pattern every mature
+admin tool ships (Grafana, ArgoCD, Vault): SSO for every day, plus a password that
+still works when the identity provider is itself the thing that's broken — which,
+for a tool you open *because* the network is misbehaving, is not a hypothetical.
+It is also a permanently attached weaker credential that bypasses the OIDC
+allowlist, so it wants one account, a long random password, and no daily use.
+
+`autoRedirect` cannot be combined with local login: it would skip the very page
+the password form lives on. The chart refuses that combination rather than guess
+which one you meant.
 
 ### Local login
 

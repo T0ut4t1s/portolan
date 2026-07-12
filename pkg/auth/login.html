@@ -44,6 +44,14 @@
     border-radius:9px;padding:9px 12px;font-size:.8rem;margin:0 0 16px;}
   .note{background:var(--accent-soft);border:1px solid var(--line-2);color:var(--muted);
     border-radius:9px;padding:9px 12px;font-size:.8rem;margin:0 0 16px;}
+  /* Divider, shown only when both sign-in methods are offered. */
+  .or{display:flex;align-items:center;gap:10px;margin:16px 0 12px;
+    font-family:var(--mono);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+  .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line);}
+  /* With a password form present, SSO is the alternative, not the headline —
+     two filled buttons would compete and neither would read as the default. */
+  .btn.alt{background:transparent;color:var(--ink);border-color:var(--line-2);}
+  .btn.alt:hover{border-color:var(--accent);color:var(--accent);filter:none;}
   .foot{margin-top:18px;font-family:var(--mono);font-size:.66rem;color:var(--muted);text-align:center;}
 </style>
 </head>
@@ -60,9 +68,7 @@
     <p class="sub">This dashboard is protected. Sign in to view the cluster's network policy map.</p>
     {{if .Note}}<div class="note">{{.Note}}</div>{{end}}
     {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
-    {{if .OIDC}}
-    <a class="btn" href="{{.StartURL}}">Sign in with {{.Provider}}</a>
-    {{else}}
+    {{if .Local}}
     <form method="post" action="/login" autocomplete="on">
       <input type="hidden" name="next" value="{{.Next}}">
       <label for="u">Username</label>
@@ -71,6 +77,10 @@
       <input id="p" type="password" name="password" autocomplete="current-password" required>
       <button type="submit">Sign in</button>
     </form>
+    {{end}}
+    {{if and .Local .OIDC}}<div class="or"><span>or</span></div>{{end}}
+    {{if .OIDC}}
+    <a class="btn {{if .Local}}alt{{end}}" href="{{.StartURL}}">Sign in with {{.Provider}}</a>
     {{end}}
     <div class="foot">read-only · your session is stored in a signed cookie</div>
   </div>

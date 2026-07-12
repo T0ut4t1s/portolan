@@ -1,3 +1,19 @@
+{{/*
+  auth.mode accepts a single method ("oidc") or several ("[local, oidc]", or the
+  comma-separated string "local,oidc"). Normalize to a list once, here, so the
+  rest of the template asks "is local on?" rather than re-parsing the shape.
+*/}}
+{{- $modes := .Values.auth.mode }}
+{{- if kindIs "string" $modes }}
+  {{- $modes = splitList "," $modes }}
+{{- end }}
+{{- $modes = without $modes "" }}
+{{- $authOn := and (gt (len $modes) 0) (not (has "none" $modes)) }}
+{{- $local := and $authOn (has "local" $modes) }}
+{{- $oidc := and $authOn (has "oidc" $modes) }}
+{{- if and $oidc $local .Values.auth.oidc.autoRedirect }}
+  {{- fail "portolan: auth.oidc.autoRedirect cannot be combined with local login — it would skip the page the password form is on" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,13 +69,13 @@ spec:
             - --flows={{ .Values.flows.window }}
             - --hubble-server={{ .Values.flows.server }}
             {{- end }}
-            {{- if ne .Values.auth.mode "none" }}
+            {{- if $authOn }}
             - --auth-session-ttl={{ .Values.auth.sessionTTL }}
             {{- end }}
-            {{- if eq .Values.auth.mode "local" }}
+            {{- if $local }}
             - --auth-users-file=/etc/portolan/auth/users
             {{- end }}
-            {{- if eq .Values.auth.mode "oidc" }}
+            {{- if $oidc }}
             {{- with .Values.auth.oidc }}
             - --auth-oidc-issuer={{ required "portolan: auth.oidc.issuer is required when auth.mode=oidc" .issuer }}
             - --auth-oidc-redirect-url={{ required "portolan: auth.oidc.redirectURL is required when auth.mode=oidc" .redirectURL }}
@@ -87,23 +103,26 @@ spec:
             {{- with .providerName }}
             - {{ printf "--auth-oidc-provider-name=%s" . | quote }}
             {{- end }}
+            {{- if .autoRedirect }}
+            - --auth-oidc-auto-redirect
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if ne .Values.auth.mode "none" }}
+          {{- if $authOn }}
           # Secrets arrive as env, never as args: anything on the command line is
           # readable from /proc by every process that can see this pod.
           env:
             - name: PORTOLAN_AUTH_MODE
-              value: {{ .Values.auth.mode | quote }}
+              value: {{ join "," $modes | quote }}
             - name: PORTOLAN_AUTH_SESSION_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ required "portolan: auth.existingSecret is required when auth is enabled" .Values.auth.existingSecret }}
                   key: session-key
-            {{- if eq .Values.auth.mode "oidc" }}
+            {{- if $oidc }}
             {{- if not .Values.auth.oidc.clientID }}
             # Not set in values: the client's identity lives whole in the Secret,
             # id beside secret, rather than split across two places that can drift.
@@ -143,7 +162,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            {{- if eq .Values.auth.mode "local" }}
+            {{- if $local }}
             - name: auth-users
               mountPath: /etc/portolan/auth
               readOnly: true
@@ -156,7 +175,7 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        {{- if eq .Values.auth.mode "local" }}
+        {{- if $local }}
         - name: auth-users
           secret:
             secretName: {{ .Values.auth.existingSecret }}

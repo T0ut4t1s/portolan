@@ -29,7 +29,7 @@ func testAuth(t *testing.T) *Authenticator {
 		t.Fatal(err)
 	}
 	a, err := New(context.Background(), Config{
-		Mode: ModeLocal, SessionKey: key, SessionTTL: time.Hour,
+		Modes: []Mode{ModeLocal}, SessionKey: key, SessionTTL: time.Hour,
 		Users: map[string]string{"alice": string(h)}, Insecure: true,
 	})
 	if err != nil {
@@ -44,9 +44,9 @@ func okHandler() http.Handler {
 
 func TestNewFailsClosed(t *testing.T) {
 	cases := []Config{
-		{Mode: ModeLocal, SessionKey: make([]byte, 16), Users: map[string]string{"a": "$2a$x"}}, // short key
-		{Mode: ModeLocal, SessionKey: make([]byte, 32)},                                         // no users
-		{Mode: "bogus", SessionKey: make([]byte, 32), Users: map[string]string{"a": "$2a$x"}},   // bad mode
+		{Modes: []Mode{ModeLocal}, SessionKey: make([]byte, 16), Users: map[string]string{"a": "$2a$x"}}, // short key
+		{Modes: []Mode{ModeLocal}, SessionKey: make([]byte, 32)},                                         // no users
+		{Modes: []Mode{"bogus"}, SessionKey: make([]byte, 32), Users: map[string]string{"a": "$2a$x"}},   // bad mode
 	}
 	for i, c := range cases {
 		if _, err := New(context.Background(), c); err == nil {
@@ -54,7 +54,7 @@ func TestNewFailsClosed(t *testing.T) {
 		}
 	}
 	// mode none is always fine and a pass-through.
-	a, err := New(context.Background(), Config{Mode: ModeNone})
+	a, err := New(context.Background(), Config{Modes: []Mode{ModeNone}})
 	if err != nil || a.Enabled() {
 		t.Fatalf("mode none: err=%v enabled=%v", err, a.Enabled())
 	}
@@ -135,7 +135,7 @@ func TestGate(t *testing.T) {
 }
 
 func TestModeNonePassesThrough(t *testing.T) {
-	a, _ := New(context.Background(), Config{Mode: ModeNone})
+	a, _ := New(context.Background(), Config{Modes: []Mode{ModeNone}})
 	h := a.Middleware(okHandler())
 	r := httptest.NewRequest("GET", "/snapshot.json", nil)
 	w := httptest.NewRecorder()

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // ---- a fake OpenID provider ----
@@ -195,7 +197,7 @@ func oidcAuth(t *testing.T, f *fakeIdP, tweak func(*OIDCConfig)) *Authenticator 
 		tweak(c)
 	}
 	a, err := New(context.Background(), Config{
-		Mode: ModeOIDC, SessionKey: key, SessionTTL: time.Hour, OIDC: c, Insecure: true,
+		Modes: []Mode{ModeOIDC}, SessionKey: key, SessionTTL: time.Hour, OIDC: c, Insecure: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +475,7 @@ func TestOIDCRequiresAnAllowlist(t *testing.T) {
 	key := make([]byte, 32)
 	rand.Read(key)
 	_, err := New(context.Background(), Config{
-		Mode: ModeOIDC, SessionKey: key, Insecure: true,
+		Modes: []Mode{ModeOIDC}, SessionKey: key, Insecure: true,
 		OIDC: &OIDCConfig{
 			Issuer: f.issuer, ClientID: "portolan", ClientSecret: "shh",
 			RedirectURL: "http://portolan.example/auth/callback",
@@ -516,7 +518,7 @@ func TestOIDCConfigFailsClosed(t *testing.T) {
 			c := base()
 			break_(c)
 			if _, err := New(context.Background(), Config{
-				Mode: ModeOIDC, SessionKey: key, OIDC: c, Insecure: true,
+				Modes: []Mode{ModeOIDC}, SessionKey: key, OIDC: c, Insecure: true,
 			}); err == nil {
 				t.Error("expected an error, got nil")
 			}
@@ -615,4 +617,196 @@ func TestOIDCLoginPage(t *testing.T) {
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /login in oidc mode: got %d, want 405", w.Code)
 	}
+}
+
+// ---- the five configurations ----
+//
+// An operator can offer: nothing, passwords, SSO-with-a-button, SSO-straight-
+// through, or passwords-and-SSO-together. These pin what each one actually
+// serves, because the login card is the only place a viewer learns which ways
+// in exist.
+
+func TestSignInMethodsOnTheCard(t *testing.T) {
+	f := newFakeIdP(t, "portolan")
+	key := make([]byte, 32)
+	rand.Read(key)
+	users := map[string]string{"admin": mustHash(t, "hunter2")}
+	oidcCfg := func() *OIDCConfig {
+		return &OIDCConfig{
+			Issuer: f.issuer, ClientID: "portolan", ClientSecret: "shh",
+			RedirectURL:   "http://portolan.example/auth/callback",
+			AllowedGroups: []string{"portolan-viewers"},
+		}
+	}
+
+	for _, tc := range []struct {
+		name             string
+		cfg              Config
+		wantPassword     bool
+		wantProviderBtn  bool
+		wantAutoRedirect bool
+	}{
+		{
+			name:         "local only",
+			cfg:          Config{Modes: []Mode{ModeLocal}, SessionKey: key, Users: users, Insecure: true},
+			wantPassword: true,
+		},
+		{
+			name:            "oidc only, with a button",
+			cfg:             Config{Modes: []Mode{ModeOIDC}, SessionKey: key, OIDC: oidcCfg(), Insecure: true},
+			wantProviderBtn: true,
+		},
+		{
+			name: "oidc only, straight through",
+			cfg: Config{Modes: []Mode{ModeOIDC}, SessionKey: key, Insecure: true,
+				OIDC: func() *OIDCConfig { c := oidcCfg(); c.AutoRedirect = true; return c }()},
+			wantAutoRedirect: true,
+		},
+		{
+			name:            "local and oidc together",
+			cfg:             Config{Modes: []Mode{ModeLocal, ModeOIDC}, SessionKey: key, Users: users, OIDC: oidcCfg(), Insecure: true},
+			wantPassword:    true,
+			wantProviderBtn: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := New(context.Background(), tc.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mux := http.NewServeMux()
+			a.Register(mux)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest("GET", "/login", nil))
+
+			if tc.wantAutoRedirect {
+				if w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "/auth/login") {
+					t.Fatalf("auto-redirect: got %d loc=%q, want 302 to /auth/login", w.Code, w.Header().Get("Location"))
+				}
+				return
+			}
+			if w.Code != http.StatusOK {
+				t.Fatalf("login page: got %d, want 200", w.Code)
+			}
+			body := w.Body.String()
+			if got := strings.Contains(body, `type="password"`); got != tc.wantPassword {
+				t.Errorf("password field present = %v, want %v", got, tc.wantPassword)
+			}
+			if got := strings.Contains(body, "Sign in with "); got != tc.wantProviderBtn {
+				t.Errorf("provider button present = %v, want %v", got, tc.wantProviderBtn)
+			}
+			// POST /login exists only where a password can be checked.
+			w = httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest("POST", "/login", strings.NewReader("username=a&password=b")))
+			if gone := w.Code == http.StatusMethodNotAllowed; gone == tc.wantPassword {
+				t.Errorf("POST /login got %d, but local enabled = %v", w.Code, tc.wantPassword)
+			}
+		})
+	}
+}
+
+// Auto-redirect must stand aside whenever the card has something to say.
+// Redirecting after a sign-out would bounce straight back through a live SSO
+// session and sign the viewer in again — sign-out would look broken. Redirecting
+// on an error would spin forever: a viewer the allowlist rejects gets sent to the
+// provider, authenticated, rejected, sent again.
+func TestAutoRedirectYieldsToTheCard(t *testing.T) {
+	f := newFakeIdP(t, "portolan")
+	a := oidcAuth(t, f, func(c *OIDCConfig) { c.AutoRedirect = true })
+	mux := http.NewServeMux()
+	a.Register(mux)
+
+	for _, tc := range []struct{ name, path, want string }{
+		{"signed out", "/login?signedout=1", "You have been signed out."},
+		{"rejected by the allowlist", "/login?err=denied", "not permitted"},
+		{"sign-in failed", "/login?err=failed", "did not complete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d, want the card (200) rather than a redirect", w.Code)
+			}
+			if !strings.Contains(w.Body.String(), tc.want) {
+				t.Errorf("card should say %q", tc.want)
+			}
+		})
+	}
+}
+
+// Auto-redirect would skip the card the password form lives on, leaving no way
+// to reach it. Refuse the combination rather than silently pick a winner.
+func TestAutoRedirectRejectedAlongsideLocal(t *testing.T) {
+	f := newFakeIdP(t, "portolan")
+	key := make([]byte, 32)
+	rand.Read(key)
+	_, err := New(context.Background(), Config{
+		Modes: []Mode{ModeLocal, ModeOIDC}, SessionKey: key, Insecure: true,
+		Users: map[string]string{"admin": mustHash(t, "hunter2")},
+		OIDC: &OIDCConfig{
+			Issuer: f.issuer, ClientID: "portolan", ClientSecret: "shh",
+			RedirectURL:   "http://portolan.example/auth/callback",
+			AllowedGroups: []string{"portolan-viewers"}, AutoRedirect: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error: auto-redirect would hide the password form")
+	}
+	if !strings.Contains(err.Error(), "auto-redirect") {
+		t.Errorf("error should name the culprit, got: %v", err)
+	}
+}
+
+// Both methods must actually work when both are offered — the card is not a lie.
+func TestLocalAndOIDCBothMintSessions(t *testing.T) {
+	f := newFakeIdP(t, "portolan")
+	f.claims = map[string]any{"preferred_username": "alice", "groups": []any{"portolan-viewers"}}
+	key := make([]byte, 32)
+	rand.Read(key)
+	a, err := New(context.Background(), Config{
+		Modes: []Mode{ModeLocal, ModeOIDC}, SessionKey: key, SessionTTL: time.Hour, Insecure: true,
+		Users: map[string]string{"admin": mustHash(t, "hunter2")},
+		OIDC: &OIDCConfig{
+			Issuer: f.issuer, ClientID: "portolan", ClientSecret: "shh",
+			RedirectURL:   "http://portolan.example/auth/callback",
+			AllowedGroups: []string{"portolan-viewers"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	a.Register(mux)
+
+	// the password path
+	form := url.Values{"username": {"admin"}, "password": {"hunter2"}, "next": {"/"}}
+	r := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	c := cookieNamed(w.Result().Cookies(), cookieName)
+	if c == nil {
+		t.Fatal("password sign-in minted no session")
+	}
+	if sub, ok := a.decode(c.Value); !ok || sub != "admin" {
+		t.Fatalf("password session: sub=%q ok=%v", sub, ok)
+	}
+
+	// the SSO path, same Authenticator, same cookie
+	c = cookieNamed(signIn(t, f, a, nil).Result().Cookies(), cookieName)
+	if c == nil {
+		t.Fatal("SSO sign-in minted no session")
+	}
+	if sub, ok := a.decode(c.Value); !ok || sub != "alice" {
+		t.Fatalf("SSO session: sub=%q ok=%v", sub, ok)
+	}
+}
+
+func mustHash(t *testing.T, pw string) string {
+	t.Helper()
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(h)
 }

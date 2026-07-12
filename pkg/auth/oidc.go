@@ -59,6 +59,13 @@ type OIDCConfig struct {
 
 	// ProviderName labels the sign-in button; defaults to the issuer's host.
 	ProviderName string
+
+	// AutoRedirect skips the login card and sends the viewer straight to the
+	// provider. With OIDC the only way in there is nothing to choose, so the card
+	// is a click that buys nothing. It is suppressed when the card has something
+	// to say — after a sign-out, or on an error — and it cannot be combined with
+	// local login, which it would hide.
+	AutoRedirect bool
 }
 
 // oidcClient is the resolved provider: everything discovery told us, plus the
