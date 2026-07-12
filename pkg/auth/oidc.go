@@ -24,20 +24,25 @@ import (
 // against an OpenID Connect provider. The resulting session is the same sealed
 // cookie local mode issues — only the way it is earned differs.
 type OIDCConfig struct {
-	// Issuer is what the provider calls itself in the `iss` claim, and where
-	// discovery happens unless DiscoveryURL overrides it.
+	// Issuer is what the provider calls itself in the `iss` claim, and the base
+	// for discovery. Every URL Portolan uses stays this public one.
 	Issuer string
-	// DiscoveryURL, when set, is where the discovery document, the signing keys
-	// and the token endpoint are actually fetched from, while `iss` is still
-	// required to equal Issuer. This lets an in-cluster Portolan reach its IdP
-	// over a Service (http://authentik-server.authentik:80/...) instead of
-	// hairpinning out through the public ingress and back — which would need a
-	// far wider egress policy for a pod that otherwise only talks to the
-	// kube-API and Hubble. The browser-facing authorization endpoint always
-	// stays the public URL the provider advertises.
-	DiscoveryURL string
-	ClientID     string
-	ClientSecret string
+	// BackchannelURL, when set, is the address to *dial* for the back-channel
+	// calls — discovery, the signing keys, and the code exchange — instead of
+	// the issuer's own host. Only the destination changes: the request still
+	// carries the issuer's Host header, so the provider keeps building public
+	// URLs and keeps minting tokens whose `iss` is the public issuer.
+	//
+	// This lets an in-cluster Portolan reach its IdP over a Service
+	// (http://authentik-server.authentik:80) rather than hairpinning out through
+	// the public ingress and back, which would demand a far wider egress policy
+	// for a pod that otherwise talks only to the kube-API and Hubble.
+	//
+	// The path is ignored — this is an address, not an endpoint. The browser is
+	// never sent here: it goes to the public authorization URL, as it must.
+	BackchannelURL string
+	ClientID       string
+	ClientSecret   string
 	// RedirectURL is the absolute callback, and must match what is registered
 	// with the provider: https://portolan.example.com/auth/callback
 	RedirectURL string
@@ -56,13 +61,53 @@ type OIDCConfig struct {
 	ProviderName string
 }
 
-// oidcClient is the resolved provider: everything discovery told us, with the
-// back-channel endpoints pointed wherever DiscoveryURL says.
+// oidcClient is the resolved provider: everything discovery told us, plus the
+// HTTP client the back channel must be spoken over.
 type oidcClient struct {
 	cfg      *OIDCConfig
 	oauth    *oauth2.Config
 	verifier *oidc.IDTokenVerifier
+	http     *http.Client // nil unless BackchannelURL redirects the dial
 	name     string
+}
+
+// ctx attaches the back-channel client, so the code exchange and any key
+// refresh dial where BackchannelURL says rather than the issuer's public host.
+func (o *oidcClient) ctx(parent context.Context) context.Context {
+	if o.http == nil {
+		return parent
+	}
+	return oidc.ClientContext(parent, o.http)
+}
+
+// backchannelTransport dials somewhere other than the URL says, while leaving
+// the request looking untouched to the provider.
+//
+// Providers build their advertised URLs — and the `iss` of the tokens they mint
+// — from the request's Host and X-Forwarded-Proto. Authentik and Keycloak both
+// do. Dial such a provider over a cluster Service and it will cheerfully
+// describe itself as http://authentik-server.authentik.svc…, and mint ID tokens
+// claiming the same; no verifier pinned to the public issuer could ever accept
+// them. Preserving the issuer's Host header is what keeps the provider's view of
+// itself — and therefore every token it signs — public and stable, no matter
+// which address we happened to dial.
+type backchannelTransport struct {
+	issuer *url.URL // requests bound for this host...
+	target *url.URL // ...are dialled here instead
+	base   http.RoundTripper
+}
+
+func (t *backchannelTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host != t.issuer.Host {
+		return t.base.RoundTrip(r) // not the provider; leave it alone
+	}
+	r = r.Clone(r.Context())
+	r.Host = t.issuer.Host // Host header stays public...
+	r.Header.Set("X-Forwarded-Proto", t.issuer.Scheme)
+	r.Header.Set("X-Forwarded-Host", t.issuer.Host)
+	r.URL.Scheme = t.target.Scheme // ...only the dial is redirected
+	r.URL.Host = t.target.Host
+	return t.base.RoundTrip(r)
 }
 
 // The discovery budget bounds the wait for a provider that is still starting
@@ -102,7 +147,22 @@ func newOIDCClient(ctx context.Context, c *OIDCConfig) (*oidcClient, error) {
 		c.GroupsClaim = "groups"
 	}
 
-	provider, err := discover(ctx, c)
+	issuerURL, err := url.Parse(c.Issuer)
+	if err != nil || issuerURL.Scheme == "" || issuerURL.Host == "" {
+		return nil, fmt.Errorf("auth: oidc issuer must be an absolute URL, got %q", c.Issuer)
+	}
+	client, err := backchannelClient(issuerURL, c.BackchannelURL)
+	if err != nil {
+		return nil, err
+	}
+	// Every URL below is the provider's own public one — discovery, JWKS, token
+	// endpoint alike. When a back channel is configured it is the *dial* that is
+	// redirected, inside the transport; nothing upstream of it needs to know.
+	bctx := ctx
+	if client != nil {
+		bctx = oidc.ClientContext(ctx, client)
+	}
+	provider, err := discover(bctx, c.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -116,33 +176,13 @@ func newOIDCClient(ctx context.Context, c *OIDCConfig) (*oidcClient, error) {
 		return nil, errors.New("auth: oidc: discovery document advertises no jwks_uri")
 	}
 
-	endpoint := provider.Endpoint()
-	jwksURL, tokenURL := meta.JWKSURL, endpoint.TokenURL
-	if c.DiscoveryURL != "" {
-		// Discovery advertises the provider's public URLs. The browser needs the
-		// public authorization endpoint — it is the browser that goes there — but
-		// our own back-channel calls should stay inside the cluster, so send them
-		// to the discovery host instead.
-		if jwksURL, err = rehost(jwksURL, c.DiscoveryURL); err != nil {
-			return nil, err
-		}
-		if tokenURL, err = rehost(tokenURL, c.DiscoveryURL); err != nil {
-			return nil, err
-		}
-	}
-
-	// The verifier checks the signature against the provider's live JWKS and
-	// pins iss to the public issuer and aud to our client ID — regardless of
-	// where the metadata was fetched from.
-	verifier := oidc.NewVerifier(c.Issuer, oidc.NewRemoteKeySet(ctx, jwksURL), &oidc.Config{ClientID: c.ClientID})
+	// The verifier checks the signature against the provider's live JWKS, and
+	// pins iss to the issuer and aud to our client ID.
+	verifier := oidc.NewVerifier(c.Issuer, oidc.NewRemoteKeySet(bctx, meta.JWKSURL), &oidc.Config{ClientID: c.ClientID})
 
 	name := c.ProviderName
 	if name == "" {
-		if u, err := url.Parse(c.Issuer); err == nil && u.Host != "" {
-			name = u.Host
-		} else {
-			name = "your identity provider"
-		}
+		name = issuerURL.Host
 	}
 
 	return &oidcClient{
@@ -150,38 +190,38 @@ func newOIDCClient(ctx context.Context, c *OIDCConfig) (*oidcClient, error) {
 		oauth: &oauth2.Config{
 			ClientID:     c.ClientID,
 			ClientSecret: c.ClientSecret,
-			Endpoint: oauth2.Endpoint{
-				AuthURL:   endpoint.AuthURL,
-				TokenURL:  tokenURL,
-				AuthStyle: endpoint.AuthStyle,
-			},
-			RedirectURL: c.RedirectURL,
-			Scopes:      c.Scopes,
+			Endpoint:     provider.Endpoint(),
+			RedirectURL:  c.RedirectURL,
+			Scopes:       c.Scopes,
 		},
 		verifier: verifier,
+		http:     client,
 		name:     name,
+	}, nil
+}
+
+// backchannelClient returns the HTTP client for provider calls, or nil to use
+// the default one when no back channel is configured.
+func backchannelClient(issuer *url.URL, backchannel string) (*http.Client, error) {
+	if backchannel == "" {
+		return nil, nil
+	}
+	target, err := url.Parse(backchannel)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		return nil, fmt.Errorf("auth: oidc backchannel URL must be absolute (scheme://host), got %q", backchannel)
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &backchannelTransport{issuer: issuer, target: target, base: http.DefaultTransport},
 	}, nil
 }
 
 // discover fetches the provider metadata, retrying a provider that is not up
 // yet before finally giving up (and, upstack, refusing to start).
-func discover(ctx context.Context, c *OIDCConfig) (*oidc.Provider, error) {
-	from := c.Issuer
-	dctx := ctx
-	if c.DiscoveryURL != "" {
-		from = c.DiscoveryURL
-		// go-oidc otherwise insists the document's `issuer` equal the URL it
-		// fetched from. Decoupling the two is the entire point of the override,
-		// and it costs nothing: the ID token's `iss` is still verified against
-		// c.Issuer below, and its signature still has to match the provider's
-		// published keys. All we give up is the assumption that metadata can
-		// only come from the issuer's own public URL — which is exactly the
-		// assumption an in-cluster Service call breaks.
-		dctx = oidc.InsecureIssuerURLContext(ctx, c.Issuer)
-	}
+func discover(ctx context.Context, issuer string) (*oidc.Provider, error) {
 	var lastErr error
 	for attempt := 1; attempt <= discoveryAttempts; attempt++ {
-		provider, err := oidc.NewProvider(dctx, from)
+		provider, err := oidc.NewProvider(ctx, issuer)
 		if err == nil {
 			return provider, nil
 		}
@@ -189,28 +229,14 @@ func discover(ctx context.Context, c *OIDCConfig) (*oidc.Provider, error) {
 		if attempt == discoveryAttempts {
 			break
 		}
-		fmt.Fprintf(os.Stderr, "auth: oidc discovery at %s failed (attempt %d/%d): %v\n", from, attempt, discoveryAttempts, err)
+		fmt.Fprintf(os.Stderr, "auth: oidc discovery at %s failed (attempt %d/%d): %v\n", issuer, attempt, discoveryAttempts, err)
 		select {
 		case <-time.After(discoveryBackoff):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
-	return nil, fmt.Errorf("auth: oidc discovery at %s failed after %d attempts: %w", from, discoveryAttempts, lastErr)
-}
-
-// rehost swaps raw's scheme and host for base's, keeping its path and query.
-func rehost(raw, base string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("auth: oidc: parsing discovered endpoint %q: %w", raw, err)
-	}
-	b, err := url.Parse(base)
-	if err != nil || b.Scheme == "" || b.Host == "" {
-		return "", fmt.Errorf("auth: oidc: discovery URL must be absolute, got %q", base)
-	}
-	u.Scheme, u.Host = b.Scheme, b.Host
-	return u.String(), nil
+	return nil, fmt.Errorf("auth: oidc discovery at %s failed after %d attempts: %w", issuer, discoveryAttempts, lastErr)
 }
 
 // ---- login transaction ----
@@ -294,7 +320,10 @@ func (a *Authenticator) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tok, err := a.oidc.oauth.Exchange(r.Context(), code, oauth2.VerifierOption(tx.Verifier))
+	// Both calls go over the back-channel client, so they dial where
+	// BackchannelURL says rather than the issuer's public host.
+	bctx := a.oidc.ctx(r.Context())
+	tok, err := a.oidc.oauth.Exchange(bctx, code, oauth2.VerifierOption(tx.Verifier))
 	if err != nil {
 		a.oidcFail(w, r, next, "failed", "code exchange: "+err.Error())
 		return
@@ -305,7 +334,7 @@ func (a *Authenticator) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Signature, issuer, audience and expiry.
-	idt, err := a.oidc.verifier.Verify(r.Context(), rawID)
+	idt, err := a.oidc.verifier.Verify(bctx, rawID)
 	if err != nil {
 		a.oidcFail(w, r, next, "failed", "id token: "+err.Error())
 		return

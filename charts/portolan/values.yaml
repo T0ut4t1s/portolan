@@ -75,15 +75,24 @@ auth:
     clientID: ""
     redirectURL: ""
 
-    # Optional. Fetch discovery, signing keys and tokens from here instead of
-    # from the issuer, while still requiring `iss` to equal issuer above. Point
-    # it at the provider's in-cluster Service to keep the back-channel inside
-    # the cluster — otherwise Portolan hairpins out through your public ingress
-    # and back, and needs the egress policy to match. The browser still goes to
-    # the public authorization URL, as it must.
+    # Optional. The address to *dial* for the back-channel calls — discovery, the
+    # signing keys, and the code exchange — instead of the issuer's own host.
+    # Only the destination changes: the request still carries the issuer's Host
+    # header, so the provider keeps advertising public URLs and keeps minting
+    # tokens whose `iss` is the public issuer. (Authentik and Keycloak both build
+    # those from the request Host; dial them by their Service name without this
+    # and they will issue tokens as http://<service>.<ns>.svc, which no verifier
+    # pinned to the public issuer can accept.)
     #
-    #   discoveryURL: http://authentik-server.authentik.svc.cluster.local:80/application/o/portolan/
-    discoveryURL: ""
+    # Point it at the provider's in-cluster Service to keep the back channel
+    # inside the cluster — otherwise Portolan hairpins out through your public
+    # ingress and back, and the egress policy has to be wide enough to allow it.
+    # The browser still goes to the public authorization URL, as it must.
+    #
+    # The path is ignored: this is an address, not an endpoint.
+    #
+    #   backchannelURL: http://authentik-server.authentik.svc.cluster.local:80
+    backchannelURL: ""
 
     scopes: [openid, profile, email]
     groupsClaim: groups

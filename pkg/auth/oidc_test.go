@@ -33,6 +33,7 @@ type fakeIdP struct {
 	key *rsa.PrivateKey
 
 	issuer   string // what the discovery document and the tokens claim
+	base     string // the base URL the document advertises (public name, which may not be where we dial)
 	clientID string
 
 	// per-test knobs
@@ -41,6 +42,7 @@ type fakeIdP struct {
 	lifetime      time.Duration  // id_token lifetime (default 1h; negative = already expired)
 	claims        map[string]any // extra claims merged into the id_token
 	failDiscovery int            // 503 the first N discovery requests (an IdP still booting)
+	requireHost   string         // if set, reject any back-channel request not carrying this Host
 
 	codes map[string]authCode
 }
@@ -55,8 +57,19 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 	}
 	f := &fakeIdP{key: key, clientID: clientID, lifetime: time.Hour, codes: map[string]authCode{}}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+	inner := http.NewServeMux()
+	// A real provider derives its identity from the Host it is addressed by. This
+	// one is stricter: it refuses anything that arrives under the wrong name, so
+	// a back channel that dropped the header fails loudly instead of quietly
+	// minting tokens with the wrong issuer.
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.requireHost != "" && r.Host != f.requireHost {
+			http.Error(w, "wrong Host: "+r.Host, http.StatusMisdirectedRequest)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	inner.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		if f.failDiscovery > 0 {
 			f.failDiscovery--
 			http.Error(w, "still starting up", http.StatusServiceUnavailable)
@@ -64,13 +77,13 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 		}
 		writeJSON(w, map[string]any{
 			"issuer":                                f.issuer,
-			"authorization_endpoint":                f.srv.URL + "/authorize",
-			"token_endpoint":                        f.srv.URL + "/token",
-			"jwks_uri":                              f.srv.URL + "/jwks",
+			"authorization_endpoint":                f.base + "/authorize",
+			"token_endpoint":                        f.base + "/token",
+			"jwks_uri":                              f.base + "/jwks",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})
-	mux.HandleFunc("GET /jwks", func(w http.ResponseWriter, r *http.Request) {
+	inner.HandleFunc("GET /jwks", func(w http.ResponseWriter, r *http.Request) {
 		pub := f.key.Public().(*rsa.PublicKey)
 		writeJSON(w, map[string]any{"keys": []map[string]any{{
 			"kty": "RSA", "alg": "RS256", "use": "sig", "kid": "test",
@@ -79,7 +92,7 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 		}}})
 	})
 	// The browser lands here, consents, and is bounced back with a code.
-	mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
+	inner.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		code := "code-" + q.Get("state")[:8]
 		f.codes[code] = authCode{nonce: q.Get("nonce"), challenge: q.Get("code_challenge")}
@@ -91,7 +104,7 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 		http.Redirect(w, r, redirect.String(), http.StatusFound)
 	})
 	// The back channel: verifier must hash to the challenge we recorded.
-	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
+	inner.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		rec, ok := f.codes[r.PostFormValue("code")]
 		if !ok {
@@ -126,7 +139,9 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 	})
 
 	f.srv = httptest.NewServer(mux)
-	f.issuer = f.srv.URL // overridden by the discovery-override test
+	// By default the provider is known by the address it lives at; the back-channel
+	// test gives it a public name that differs from where the test can dial it.
+	f.issuer, f.base = f.srv.URL, f.srv.URL
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -190,7 +205,7 @@ func oidcAuth(t *testing.T, f *fakeIdP, tweak func(*OIDCConfig)) *Authenticator 
 
 // signIn walks the whole flow — start, provider authorize, callback — and
 // returns the callback's response.
-func signIn(t *testing.T, a *Authenticator, corrupt func(q url.Values)) *httptest.ResponseRecorder {
+func signIn(t *testing.T, f *fakeIdP, a *Authenticator, corrupt func(q url.Values)) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
 	a.Register(mux)
@@ -206,10 +221,14 @@ func signIn(t *testing.T, a *Authenticator, corrupt func(q url.Values)) *httptes
 		t.Fatal("/auth/login set no transaction cookie")
 	}
 
-	// 2. the provider authenticates and bounces back with a code.
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
+	// 2. the provider authenticates and bounces back with a code. The browser goes
+	// to the provider's *public* name — it has no route to a cluster-internal
+	// address — so the test dials the fake server while keeping that Host, which
+	// is what a real browser resolving public DNS would do anyway.
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport:     newRewriteTransport(t, f.base, f.srv.URL),
+	}
 	resp, err := client.Get(start.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +249,34 @@ func signIn(t *testing.T, a *Authenticator, corrupt func(q url.Values)) *httptes
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	return w
+}
+
+// rewriteTransport stands in for DNS: it dials `to` for anything addressed to
+// `from`, leaving the Host header alone. The test browser needs it for the same
+// reason the pod needs a back channel — the public name is not where the server
+// actually is.
+type rewriteTransport struct{ from, to *url.URL }
+
+func newRewriteTransport(t *testing.T, from, to string) *rewriteTransport {
+	t.Helper()
+	f, err := url.Parse(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := url.Parse(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &rewriteTransport{from: f, to: d}
+}
+
+func (rt *rewriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host == rt.from.Host {
+		r = r.Clone(r.Context())
+		r.Host = rt.from.Host // the server still sees its public name
+		r.URL.Scheme, r.URL.Host = rt.to.Scheme, rt.to.Host
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 func cookieNamed(cs []*http.Cookie, name string) *http.Cookie {
@@ -267,7 +314,7 @@ func TestOIDCSignIn(t *testing.T) {
 	}
 	a := oidcAuth(t, f, nil)
 
-	w := signIn(t, a, nil)
+	w := signIn(t, f, a, nil)
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
 		t.Fatalf("sign-in: got %d loc=%q, want 302 to /audit.json", w.Code, w.Header().Get("Location"))
 	}
@@ -291,7 +338,7 @@ func TestOIDCStateMismatchRejected(t *testing.T) {
 	f.claims = map[string]any{"groups": []any{"portolan-viewers"}}
 	a := oidcAuth(t, f, nil)
 
-	w := signIn(t, a, func(q url.Values) { q.Set("state", "not-the-state-we-issued") })
+	w := signIn(t, f, a, func(q url.Values) { q.Set("state", "not-the-state-we-issued") })
 	assertDenied(t, w, "failed")
 }
 
@@ -330,7 +377,7 @@ func TestOIDCNonceMismatchRejected(t *testing.T) {
 	f.nonce = "a-nonce-from-another-login"
 	a := oidcAuth(t, f, nil)
 
-	assertDenied(t, signIn(t, a, nil), "failed")
+	assertDenied(t, signIn(t, f, a, nil), "failed")
 }
 
 func TestOIDCExpiredTokenRejected(t *testing.T) {
@@ -339,7 +386,7 @@ func TestOIDCExpiredTokenRejected(t *testing.T) {
 	f.lifetime = -time.Minute
 	a := oidcAuth(t, f, nil)
 
-	assertDenied(t, signIn(t, a, nil), "failed")
+	assertDenied(t, signIn(t, f, a, nil), "failed")
 }
 
 // A token minted for a different client is not a token for us.
@@ -349,7 +396,7 @@ func TestOIDCWrongAudienceRejected(t *testing.T) {
 	f.audience = "some-other-app"
 	a := oidcAuth(t, f, nil)
 
-	assertDenied(t, signIn(t, a, nil), "failed")
+	assertDenied(t, signIn(t, f, a, nil), "failed")
 }
 
 // ---- authorization ----
@@ -364,7 +411,7 @@ func TestOIDCGroupNotAllowed(t *testing.T) {
 	}
 	a := oidcAuth(t, f, nil)
 
-	assertDenied(t, signIn(t, a, nil), "denied")
+	assertDenied(t, signIn(t, f, a, nil), "denied")
 }
 
 func TestOIDCAllowedEmail(t *testing.T) {
@@ -375,7 +422,7 @@ func TestOIDCAllowedEmail(t *testing.T) {
 		c.AllowedEmails = []string{"alice@example.com"}
 	})
 
-	if w := signIn(t, a, nil); w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
+	if w := signIn(t, f, a, nil); w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
 		t.Fatalf("allowed email: got %d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 }
@@ -390,7 +437,7 @@ func TestOIDCUnverifiedEmailRejected(t *testing.T) {
 		c.AllowedEmails = []string{"alice@example.com"}
 	})
 
-	assertDenied(t, signIn(t, a, nil), "denied")
+	assertDenied(t, signIn(t, f, a, nil), "denied")
 }
 
 func TestOIDCAllowAnyAuthenticated(t *testing.T) {
@@ -401,7 +448,7 @@ func TestOIDCAllowAnyAuthenticated(t *testing.T) {
 		c.AllowAnyAuthenticated = true
 	})
 
-	if w := signIn(t, a, nil); w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
+	if w := signIn(t, f, a, nil); w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
 		t.Fatalf("allow-any: got %d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 }
@@ -412,7 +459,7 @@ func TestOIDCCustomGroupsClaim(t *testing.T) {
 	f.claims = map[string]any{"roles": []any{"portolan-viewers"}}
 	a := oidcAuth(t, f, func(c *OIDCConfig) { c.GroupsClaim = "roles" })
 
-	if w := signIn(t, a, nil); w.Code != http.StatusFound {
+	if w := signIn(t, f, a, nil); w.Code != http.StatusFound {
 		t.Fatalf("custom groups claim: got %d", w.Code)
 	}
 }
@@ -477,21 +524,33 @@ func TestOIDCConfigFailsClosed(t *testing.T) {
 	}
 }
 
-// The discovery override: metadata, keys and tokens are fetched from wherever
-// we point them, but `iss` is still pinned to the public issuer.
-func TestOIDCDiscoveryURLOverride(t *testing.T) {
-	const public = "https://sso.example.com/application/o/portolan/"
+// The back channel: every URL stays the provider's public one, and only the
+// dial is redirected. What makes that work — and what this test pins — is that
+// the provider still sees its own public Host on the wire. Authentik and
+// Keycloak build their advertised URLs, and the `iss` of every token they mint,
+// from that header. Lose it and an in-cluster token exchange yields tokens
+// issued by http://<service>.<ns>.svc, which no verifier pinned to the public
+// issuer could ever accept.
+func TestOIDCBackchannel(t *testing.T) {
+	const public = "https://sso.example.com"
 	f := newFakeIdP(t, "portolan")
-	f.issuer = public // the document and the tokens claim the public identity...
+	f.issuer = public                 // the document and the tokens claim the public identity...
+	f.base = public                   // ...and advertise public endpoints...
+	f.requireHost = "sso.example.com" // ...and refuse anything arriving under another name
 	f.claims = map[string]any{"preferred_username": "alice", "groups": []any{"portolan-viewers"}}
 
 	a := oidcAuth(t, f, func(c *OIDCConfig) {
 		c.Issuer = public
-		c.DiscoveryURL = f.srv.URL // ...while we actually talk to the local one
+		c.BackchannelURL = f.srv.URL // while we actually dial the local one
 	})
-	w := signIn(t, a, nil)
+	w := signIn(t, f, a, nil)
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/audit.json" {
-		t.Fatalf("override sign-in: got %d loc=%q", w.Code, w.Header().Get("Location"))
+		t.Fatalf("back-channel sign-in: got %d loc=%q", w.Code, w.Header().Get("Location"))
+	}
+	// The browser must still be sent to the public authorization endpoint: it
+	// cannot reach a cluster-internal Service.
+	if !strings.HasPrefix(a.oidc.oauth.Endpoint.AuthURL, "https://sso.example.com/") {
+		t.Errorf("authorization endpoint = %q, want the public one", a.oidc.oauth.Endpoint.AuthURL)
 	}
 }
 
@@ -506,21 +565,25 @@ func TestOIDCDiscoveryRetriesThenSucceeds(t *testing.T) {
 	f.claims = map[string]any{"preferred_username": "alice", "groups": []any{"portolan-viewers"}}
 
 	a := oidcAuth(t, f, nil) // fatals if discovery gave up
-	if w := signIn(t, a, nil); w.Code != http.StatusFound {
+	if w := signIn(t, f, a, nil); w.Code != http.StatusFound {
 		t.Fatalf("sign-in after a slow start: got %d", w.Code)
 	}
 }
 
-func TestRehost(t *testing.T) {
-	got, err := rehost("https://sso.example.com/application/o/token/", "http://authentik.authentik:9000")
+func TestBackchannelClient(t *testing.T) {
+	issuer, err := url.Parse("https://sso.example.com/application/o/portolan/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "http://authentik.authentik:9000/application/o/token/"; got != want {
-		t.Errorf("rehost = %q, want %q", got, want)
+	// No back channel configured: the default client, not a transport that would
+	// silently rewrite nothing.
+	c, err := backchannelClient(issuer, "")
+	if err != nil || c != nil {
+		t.Errorf("unconfigured back channel: client=%v err=%v, want nil/nil", c, err)
 	}
-	if _, err := rehost("https://sso.example.com/x", "not-a-url"); err == nil {
-		t.Error("expected an error for a non-absolute discovery URL")
+	// An address needs a scheme — otherwise there is nothing to dial.
+	if _, err := backchannelClient(issuer, "authentik-server.authentik:80"); err == nil {
+		t.Error("expected an error for a back-channel URL with no scheme")
 	}
 }
 

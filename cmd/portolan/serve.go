@@ -64,17 +64,17 @@ type authFlags struct {
 	sessionTTL time.Duration
 	insecure   bool
 
-	oidcIssuer        string
-	oidcDiscoveryURL  string
-	oidcClientID      string
-	oidcClientSecret  string
-	oidcRedirectURL   string
-	oidcScopes        string
-	oidcGroupsClaim   string
-	oidcAllowedGroups string
-	oidcAllowedEmails string
-	oidcAllowAny      bool
-	oidcProviderName  string
+	oidcIssuer         string
+	oidcBackchannelURL string
+	oidcClientID       string
+	oidcClientSecret   string
+	oidcRedirectURL    string
+	oidcScopes         string
+	oidcGroupsClaim    string
+	oidcAllowedGroups  string
+	oidcAllowedEmails  string
+	oidcAllowAny       bool
+	oidcProviderName   string
 }
 
 func registerAuthFlags(fs *flag.FlagSet) *authFlags {
@@ -86,7 +86,7 @@ func registerAuthFlags(fs *flag.FlagSet) *authFlags {
 	fs.BoolVar(&f.insecure, "auth-cookie-insecure", false, "drop the Secure cookie flag (plain-HTTP testing only)")
 
 	fs.StringVar(&f.oidcIssuer, "auth-oidc-issuer", os.Getenv("PORTOLAN_AUTH_OIDC_ISSUER"), "OIDC issuer URL, exactly as the provider states it in the iss claim")
-	fs.StringVar(&f.oidcDiscoveryURL, "auth-oidc-discovery-url", os.Getenv("PORTOLAN_AUTH_OIDC_DISCOVERY_URL"), "fetch discovery, keys and tokens from here instead of the issuer (e.g. an in-cluster Service), while still requiring iss to equal --auth-oidc-issuer")
+	fs.StringVar(&f.oidcBackchannelURL, "auth-oidc-backchannel-url", os.Getenv("PORTOLAN_AUTH_OIDC_BACKCHANNEL_URL"), "dial this address (scheme://host, e.g. an in-cluster Service) for discovery, keys and the code exchange instead of the issuer's host; the request still carries the issuer's Host header, so URLs and token issuers stay public")
 	fs.StringVar(&f.oidcClientID, "auth-oidc-client-id", os.Getenv("PORTOLAN_AUTH_OIDC_CLIENT_ID"), "OIDC client ID")
 	fs.StringVar(&f.oidcClientSecret, "auth-oidc-client-secret", os.Getenv("PORTOLAN_AUTH_OIDC_CLIENT_SECRET"), "OIDC client secret (prefer the env var)")
 	fs.StringVar(&f.oidcRedirectURL, "auth-oidc-redirect-url", os.Getenv("PORTOLAN_AUTH_OIDC_REDIRECT_URL"), "absolute callback URL registered with the provider, e.g. https://portolan.example.com/auth/callback")
@@ -136,7 +136,7 @@ func (f *authFlags) build(ctx context.Context) (*auth.Authenticator, error) {
 	case auth.ModeOIDC:
 		cfg.OIDC = &auth.OIDCConfig{
 			Issuer:                f.oidcIssuer,
-			DiscoveryURL:          f.oidcDiscoveryURL,
+			BackchannelURL:        f.oidcBackchannelURL,
 			ClientID:              f.oidcClientID,
 			ClientSecret:          f.oidcClientSecret,
 			RedirectURL:           f.oidcRedirectURL,

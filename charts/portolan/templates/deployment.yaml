@@ -64,8 +64,8 @@ spec:
             - --auth-oidc-issuer={{ required "portolan: auth.oidc.issuer is required when auth.mode=oidc" .issuer }}
             - --auth-oidc-client-id={{ required "portolan: auth.oidc.clientID is required when auth.mode=oidc" .clientID }}
             - --auth-oidc-redirect-url={{ required "portolan: auth.oidc.redirectURL is required when auth.mode=oidc" .redirectURL }}
-            {{- with .discoveryURL }}
-            - --auth-oidc-discovery-url={{ . }}
+            {{- with .backchannelURL }}
+            - --auth-oidc-backchannel-url={{ . }}
             {{- end }}
             {{- with .scopes }}
             - --auth-oidc-scopes={{ join "," . }}

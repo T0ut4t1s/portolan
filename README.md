@@ -283,18 +283,26 @@ address the provider itself marks unverified never satisfies an email allowlist.
 
 By default Portolan reaches the provider at its issuer URL. For an in-cluster IdP
 that means hairpinning out through your public ingress and back, which needs a
-correspondingly wide egress policy. Set `auth.oidc.discoveryURL` to the
-provider's in-cluster Service to keep discovery, key fetches and the token
-exchange inside the cluster, while `iss` is still pinned to the public issuer:
+correspondingly wide egress policy. `auth.oidc.backchannelURL` gives the address
+to **dial** instead — discovery, key fetches and the code exchange all go there:
 
 ```yaml
 auth:
   oidc:
-    issuer: https://sso.example.com/application/o/portolan/          # what tokens claim
-    discoveryURL: http://authentik-server.authentik.svc:80/application/o/portolan/
+    issuer: https://sso.example.com/application/o/portolan/   # what tokens claim
+    backchannelURL: http://authentik-server.authentik.svc:80  # where we actually dial
 ```
 
-The browser still goes to the public authorization URL, as it must.
+Only the destination changes. The request still carries the issuer's `Host`
+header, which matters more than it looks: Authentik and Keycloak build their
+advertised URLs — and the `iss` of every token they sign — from that header. Dial
+them by Service name without it and they will happily mint ID tokens issued by
+`http://authentik-server.authentik.svc`, which no verifier pinned to the public
+issuer can accept. Preserving the Host keeps the provider's view of itself public
+and stable no matter where we dialled.
+
+The browser, of course, still goes to the public authorization URL. It has no
+route into your cluster.
 
 Signing out ends the **Portolan session only**. It deliberately does not drive the
 provider's `end_session_endpoint`: leaving Portolan should not sign you out of
