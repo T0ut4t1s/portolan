@@ -283,3 +283,14 @@ func TestWindowClampsToMaxWindow(t *testing.T) {
 		t.Errorf("window = %q, want it clamped to %q", fc.Window, snapshot.ShortDur(MaxWindow))
 	}
 }
+
+// The empty-store error must be the one Collect recognises, or a freshly
+// started pod reports "flow capture failed" on the map for a whole interval —
+// crying wolf on every rollout.
+func TestEmptyStoreReturnsTheWarmingSentinel(t *testing.T) {
+	s := open(t)
+	_, err := s.Capture(context.Background(), base, time.Hour)
+	if !errors.Is(err, snapshot.ErrNoObservations) {
+		t.Fatalf("err = %v, want snapshot.ErrNoObservations so Collect can tell warming from failure", err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -175,9 +176,23 @@ func (c *Collector) Collect(ctx context.Context, flows FlowOptions) (*Snapshot, 
 		} else {
 			fc, err = collectFlows(ctx, flows, c.Resolve)
 		}
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrNoObservations):
+			// Not a failure — the stream has simply not flushed yet. Every pod's
+			// first collection races the first flush and loses, and calling that
+			// "flow capture failed" cries wolf on the map for a whole interval
+			// after each rollout.
 			fc = &FlowCapture{
-				Status: "error",
+				Status: FlowStatusWarming,
+				Reason: "the flow stream has only just connected; observed traffic appears within a minute",
+				Source: FlowSourceStream,
+				Server: flows.Server,
+				Window: ShortDur(flows.Window),
+				Edges:  []FlowEdge{},
+			}
+		case err != nil:
+			fc = &FlowCapture{
+				Status: FlowStatusError,
 				Reason: err.Error(),
 				Server: flows.Server,
 				Window: ShortDur(flows.Window),

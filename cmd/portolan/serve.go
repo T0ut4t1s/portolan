@@ -343,6 +343,19 @@ func cmdServe(ctx context.Context, args []string) error {
 	// orchestrator restart-loops the pod instead of waiting.
 	go func() {
 		collect()
+		// The first collection always beats the flow stream's first flush — it
+		// runs at t=0, the stream flushes every 30s — so it finds an empty store
+		// and the map opens with no traffic on it. Waiting a whole interval to
+		// fix that would leave every rollout showing a bare policy map for 15
+		// minutes, so re-collect once the stream has had time to land something.
+		if s.flowsWarming() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(warmupRecollect):
+			}
+			collect()
+		}
 		t := time.NewTicker(*interval)
 		defer t.Stop()
 		for {
@@ -440,6 +453,19 @@ const maxWhatifRules = 20
 // stalenessCycles is how many collection intervals may elapse without a fresh
 // success before /healthz fails — matches the map's own "stale" threshold.
 const stalenessCycles = 3
+
+// warmupRecollect is how long to wait before the extra collection that picks up
+// the flow stream's first flush. Comfortably past one flush interval (30s), so
+// there is something in the store to find.
+const warmupRecollect = 45 * time.Second
+
+// flowsWarming reports whether the last collection found the flow store still
+// empty — the stream connected, but had not flushed yet.
+func (s *server) flowsWarming() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snap != nil && s.snap.Flows != nil && s.snap.Flows.Status == snapshot.FlowStatusWarming
+}
 
 func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 	var req whatifRequest

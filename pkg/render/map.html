@@ -842,7 +842,15 @@ const UI = __PORTOLAN_UI__;
       : `<span class="r${r[2] ? " " + r[2] : ""}"><b>${r[0]}</b> ${r[1]}</span>`).join("");
   }
   renderReadStrip();
-  if (DATA.flows && DATA.flows.status !== "ok") {
+  // "Warming" is not a failure, and must not be dressed as one. Serve mode's
+  // first collection runs the instant the pod starts, before the flow stream
+  // has flushed anything — so this is the ordinary state for the first minute
+  // of every rollout. A map that shouts "capture failed" each time it restarts
+  // teaches you to ignore it on the day it means something.
+  if (DATA.flows && DATA.flows.status === "warming") {
+    DATA.warnings = (DATA.warnings || []).concat(
+      ["observing traffic — the flow stream has just connected; the overlay fills in within a minute"]);
+  } else if (DATA.flows && DATA.flows.status !== "ok") {
     DATA.warnings = (DATA.warnings || []).concat(
       ["flow capture failed (" + DATA.flows.reason + ") — map shows declared policy only"]);
   }

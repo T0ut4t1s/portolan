@@ -41,6 +41,11 @@ type FlowSource interface {
 	Capture(ctx context.Context, window time.Duration) (*FlowCapture, error)
 }
 
+// ErrNoObservations reports that a FlowSource has nothing for the window yet —
+// a store whose stream has only just connected. It is not a failure: a pod's
+// first collection races the stream's first flush and loses, every time.
+var ErrNoObservations = errors.New("no observations in window yet")
+
 // ShortDur formats a window the way a person writes one — "15m", "6h", "7d" —
 // instead of Go's "168h0m0s". The map's window control round-trips this exact
 // string, so the same spelling has to come back out as went in; ParseWindow is

@@ -153,6 +153,17 @@ type FlowCapture struct {
 	Edges      []FlowEdge `json:"edges"`
 }
 
+// FlowCapture.Status values.
+const (
+	FlowStatusOK    = "ok"
+	FlowStatusError = "error"
+	// FlowStatusWarming means the stream is connected but has not flushed an
+	// observation yet — the normal state for the first minute of a pod's life.
+	// Distinct from error on purpose: a map that reports a failure every time it
+	// restarts teaches its readers to ignore failures.
+	FlowStatusWarming = "warming"
+)
+
 // FlowSourceKind names how a FlowCapture was obtained.
 type FlowSourceKind string
 

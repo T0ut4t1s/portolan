@@ -34,7 +34,6 @@ package flowstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -233,8 +232,12 @@ func (s *Store) Prune(ctx context.Context, now time.Time) error {
 }
 
 // ErrNoObservations reports that the store holds nothing for the requested
-// window — a fresh store, or one whose stream has never connected.
-var ErrNoObservations = errors.New("flow store: no observations in window")
+// window — a fresh store, or one whose stream has never connected. It is
+// defined in the snapshot package so Collect can recognise it without
+// importing this one, and tell "we have not listened yet" apart from "the
+// capture failed": the first is a normal minute of a pod's life, the second
+// is a fault.
+var ErrNoObservations = snapshot.ErrNoObservations
 
 // Live adapts the store to snapshot.FlowSource against the real clock, so
 // Collect can ask it for a window without knowing it is a database.
