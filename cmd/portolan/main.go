@@ -252,7 +252,8 @@ func cmdRender(args []string) error {
 	}
 
 	g := graph.Build(snap)
-	html, err := render.HTML(g)
+	// Standalone file: no server, so no session to sign out of.
+	html, err := render.HTML(g, render.UI{})
 	if err != nil {
 		return err
 	}

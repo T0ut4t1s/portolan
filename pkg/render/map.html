@@ -111,6 +111,12 @@
   /* The hint gets its own full-width line, left-aligned — margin-left:auto
      in the flex row made its text start mid-page at the leftover space. */
   .hint{font-family:var(--mono);font-size:.74rem;color:var(--faint);flex-basis:100%;}
+  /* Session gutter: margin-left:auto parks sign-out at the right edge of the
+     content column, flush with the workloads panel border at every width and
+     clear of the tools, which it must not compete with — hence the muted ink. */
+  .signout{margin-left:auto;}
+  .signout .btn{color:var(--muted);}
+  .signout .btn:hover{color:var(--ink-2);}
 
   /* READ strip: passive counts, no interactions — facts you glance at, never
      click. Every action lives in the toolbar below. */
@@ -500,6 +506,11 @@
       <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
     </div>
   </span>
+  <!-- Session gutter: POST, not a link — a GET /logout can be fired by any
+       third-party page. Revealed only when the server has auth enabled. -->
+  <form class="signout" id="signout" method="post" action="/logout" hidden>
+    <button class="btn" type="submit" title="sign out of Portolan">⏻ sign out</button>
+  </form>
   <span class="hint guide" id="hint">hover to peek · click a workload to focus its neighborhood · click a namespace to focus it</span>
 </div>
 
@@ -578,10 +589,16 @@
 
 <script>
 const DATA = __PORTOLAN_DATA__;
+const UI = __PORTOLAN_UI__;
 (function(){
   "use strict";
   const $ = s => document.querySelector(s);
   const SVGNS = "http://www.w3.org/2000/svg";
+
+  // ---------- session ----------
+  // Sign-out stays hidden unless a server with auth enabled served this page.
+  // A standalone rendered file has no server to sign out of.
+  if (UI.auth) $("#signout").hidden = false;
 
   // ---------- theme ----------
   // localStorage throws in sandboxed viewers (file://, iframes); the map

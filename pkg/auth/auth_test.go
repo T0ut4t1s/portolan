@@ -204,6 +204,48 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
+func TestLogout(t *testing.T) {
+	a := testAuth(t)
+	mux := http.NewServeMux()
+	a.Register(mux)
+
+	logout := func(method, origin string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/logout", nil)
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+
+	// same-origin POST -> cookie cleared, back to the login page
+	w := logout("POST", "http://example.com")
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("logout: got %d loc=%q", w.Code, w.Header().Get("Location"))
+	}
+	cleared := false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName && c.Value == "" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("logout did not clear the session cookie")
+	}
+
+	// GET is not a route: a third-party <img src=".../logout"> must not be
+	// able to sign a viewer out.
+	if w := logout("GET", "http://example.com"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /logout: got %d want 405", w.Code)
+	}
+
+	// cross-origin POST -> 403, same guard as login
+	if w := logout("POST", "http://evil.example"); w.Code != http.StatusForbidden {
+		t.Errorf("cross-origin logout: got %d want 403", w.Code)
+	}
+}
+
 func TestLoadUsers(t *testing.T) {
 	good := "# comment\nalice:$2a$10$abcdefghijklmnopqrstuv\n\nbob:$2b$10$zyxwvutsrqponmlkjihgfe\n"
 	users, err := LoadUsers(strings.NewReader(good))

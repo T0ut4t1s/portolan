@@ -252,6 +252,10 @@ helm upgrade --install portolan charts/portolan \
   --set auth.mode=local --set auth.existingSecret=portolan-auth
 ```
 
+With auth on, the map's toolbar grows a **sign out** control on the right. It is
+absent from standalone `render` output and from open deployments, where there is
+no session to end.
+
 Misconfiguration **fails closed**: local mode without a key or users file exits
 before the server binds, so a half-configured deploy never serves open. Because
 sessions are stateless there is no server-side revocation — sign-out clears the

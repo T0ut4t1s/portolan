@@ -225,7 +225,8 @@ func (a *Authenticator) Register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /login", a.loginForm)
 	mux.HandleFunc("POST /login", a.loginSubmit)
-	mux.HandleFunc("GET /logout", a.logout)
+	// POST only: a GET /logout can be fired by any third-party page (an <img>
+	// tag is enough) to sign a viewer out.
 	mux.HandleFunc("POST /logout", a.logout)
 }
 
@@ -271,6 +272,13 @@ func (a *Authenticator) loginSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Authenticator) logout(w http.ResponseWriter, r *http.Request) {
+	// Same guard as login: SameSite=Lax withholds the cookie from a cross-site
+	// POST, but the response could still clear it, so a hostile page could
+	// force a sign-out. Only annoyance, but the check is free.
+	if !sameOrigin(r) {
+		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+		return
+	}
 	a.clearCookie(w)
 	http.Redirect(w, r, "/login", http.StatusFound)
 }

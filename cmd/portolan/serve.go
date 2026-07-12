@@ -135,6 +135,10 @@ func cmdServe(ctx context.Context, args []string) error {
 		cycleTimeout = *interval
 	}
 
+	// Fixed for the life of the process: every viewer gets the same bytes, so
+	// this can only carry deployment facts, never anything per-user.
+	ui := render.UI{Auth: authn.Enabled()}
+
 	s := &server{}
 	collect := func() {
 		cctx, cancel := context.WithTimeout(ctx, cycleTimeout)
@@ -152,7 +156,7 @@ func cmdServe(ctx context.Context, args []string) error {
 
 		g := graph.Build(snap)
 		a := graph.ComputeAudit(g)
-		html, err := render.HTML(g)
+		html, err := render.HTML(g, ui)
 		if err != nil {
 			s.mu.Lock()
 			s.lastErr = err.Error()
