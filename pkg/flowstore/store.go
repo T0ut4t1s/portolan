@@ -115,7 +115,22 @@ type Store struct {
 func Open(path string) (*Store, error) {
 	// WAL lets a window query read while the accumulator is mid-flush; the busy
 	// timeout covers the brief exclusive moments WAL still needs.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	//
+	// temp_store(MEMORY) is not a tuning knob — it is load-bearing. A window
+	// query groups and orders a join over every bucket in range, and once that
+	// sort outgrows the page cache SQLite spills it to a temp FILE. Portolan
+	// runs with readOnlyRootFilesystem: true and only its data volume mounted,
+	// so there is nowhere to put one: SQLite returns SQLITE_IOERR_GETTEMPPATH
+	// (6410) and the whole flow overlay vanishes from the map.
+	//
+	// It is a bomb with a delay on it, which is what makes it worth this
+	// comment. A small store sorts inside the cache and never spills, so this
+	// passes every test, every fresh deploy, and every local run with a
+	// writable /tmp — then fails hours later once the data has grown. Sorting in
+	// memory removes the need for a temp path at all; the sort is over
+	// workload-granularity edges, not raw flows, so it stays small.
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)&_pragma=temp_store(MEMORY)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening flow store %s: %w", path, err)

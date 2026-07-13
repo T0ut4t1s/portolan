@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -292,5 +293,68 @@ func TestEmptyStoreReturnsTheWarmingSentinel(t *testing.T) {
 	_, err := s.Capture(context.Background(), base, time.Hour)
 	if !errors.Is(err, snapshot.ErrNoObservations) {
 		t.Fatalf("err = %v, want snapshot.ErrNoObservations so Collect can tell warming from failure", err)
+	}
+}
+
+// Sorting must never need a temp FILE.
+//
+// A window query groups and orders a join across every bucket in range. Once
+// that sort outgrows SQLite's page cache it spills to a temp file — and
+// Portolan runs with readOnlyRootFilesystem: true and only its data volume
+// mounted, so there is nowhere to write one. SQLite then returns
+// SQLITE_IOERR_GETTEMPPATH (6410) and the entire flow overlay disappears from
+// the map: no observed edges, no drops, nothing.
+//
+// It shipped because it is a delayed failure. A small store sorts in cache and
+// never spills, so it passed the tests, the local run (writable /tmp) and the
+// fresh deploy — then broke nine hours later once the data had grown. This test
+// makes the failure immediate: a store big enough to spill, with every temp
+// path pointed somewhere unwritable.
+func TestWindowQueryNeedsNoWritableTempDir(t *testing.T) {
+	// os.TempDir() consults these; point them at a path that cannot be written.
+	// If the sort tries to spill, it has nowhere to go — exactly like the pod.
+	nowhere := filepath.Join(t.TempDir(), "does-not-exist")
+	t.Setenv("TMPDIR", nowhere)
+	t.Setenv("TMP", nowhere)
+	t.Setenv("TEMP", nowhere)
+
+	s := open(t)
+
+	// Sorting in memory is what makes the temp path unnecessary. Assert it
+	// directly: a future "cleanup" of the DSN would otherwise silently re-arm
+	// the bomb, and the symptom would not show up for hours.
+	var mode int
+	if err := s.db.QueryRow(`PRAGMA temp_store`).Scan(&mode); err != nil {
+		t.Fatalf("reading temp_store: %v", err)
+	}
+	if mode != 2 { // 2 = MEMORY
+		t.Fatalf("temp_store = %d, want 2 (MEMORY) — otherwise a big sort spills to a temp file the pod cannot create", mode)
+	}
+
+	// Enough distinct edges across enough buckets to push the sort well past the
+	// default page cache.
+	for b := range 200 {
+		at := base.Add(time.Duration(b) * BucketSize)
+		edges := map[snapshot.FlowEdgeKey]snapshot.FlowIncrement{}
+		for i := range 60 {
+			e := edge(
+				pod("ns"+strconv.Itoa(i%12), "src"+strconv.Itoa(i)),
+				pod("ns"+strconv.Itoa((i+5)%12), "dst"+strconv.Itoa(i)),
+				strconv.Itoa(8000+i)+"/TCP",
+			)
+			edges[e] = snapshot.FlowIncrement{Count: i + 1, LastSeen: at}
+		}
+		add(t, s, at, BucketSize, edges)
+	}
+
+	fc := capture(t, s, base.Add(200*BucketSize), MaxWindow)
+	if len(fc.Edges) != 60 {
+		t.Fatalf("got %d edges, want 60 folded across 200 buckets", len(fc.Edges))
+	}
+	// Each edge appeared in all 200 buckets, so counts must have summed.
+	for _, e := range fc.Edges {
+		if e.Count < 200 {
+			t.Fatalf("edge %s->%s count = %d, want >= 200", e.Src.Name, e.Dst.Name, e.Count)
+		}
 	}
 }

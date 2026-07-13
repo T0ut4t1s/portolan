@@ -162,12 +162,23 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # readOnlyRootFilesystem leaves nothing writable but /data, so any
+            # library reaching for os.TempDir() gets a read-only /tmp and fails.
+            # SQLite did exactly that — spilling a large sort to a temp file it
+            # could not create, which took the whole flow overlay off the map.
+            # The store now sorts in memory and needs no temp path, but the next
+            # thing to want one should find it, not fall over hours later.
+            - name: tmp
+              mountPath: /tmp
             {{- if $local }}
             - name: auth-users
               mountPath: /etc/portolan/auth
               readOnly: true
             {{- end }}
       volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
