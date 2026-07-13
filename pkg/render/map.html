@@ -113,6 +113,9 @@
   .btn:hover{border-color:var(--accent)}
   /* Active = soft fill + accent border + ring — the same three-part "on"
      language as the finding chips and the open what-if chip. */
+  /* A finding lens is on and the menu is closed: the button stays lit, because
+     the map you are looking at is a filtered one and nothing else says so. */
+  .btn.lens-on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);}
   .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);
     box-shadow:0 0 0 1px var(--accent);}
   /* The hint gets its own full-width line, left-aligned — margin-left:auto
@@ -683,11 +686,7 @@ const UI = __PORTOLAN_UI__;
     const open = setmenu.hidden;
     setmenu.hidden = !open; setbtn.setAttribute("aria-expanded", String(open));
   });
-  document.addEventListener("click", e => {
-    if (!setmenu.hidden && !e.target.closest(".setwrap")) {
-      setmenu.hidden = true; setbtn.setAttribute("aria-expanded", "false");
-    }
-  });
+  // (Dismissal is handled centrally — see the popover section further down.)
   // Overview traffic arrows — a display pref (front-edges lift), default on.
   let arrowsOn = store.get("portolan-arrows") !== "off";
   const arrowsBox = $("#set-arrows"); arrowsBox.checked = arrowsOn;
@@ -2119,11 +2118,33 @@ const UI = __PORTOLAN_UI__;
     lensmenu.hidden = !open;
     lensbtn.setAttribute("aria-expanded", String(open));
   });
-  document.addEventListener("click", e => {
-    if (!lensmenu.hidden && !e.target.closest(".lenswrap")) {
-      lensmenu.hidden = true; lensbtn.setAttribute("aria-expanded", "false");
+  // ---------- popovers ----------
+  // The audit and settings menus are popovers, and a click outside one is SPENT
+  // dismissing it. It must not also land on the map behind.
+  //
+  // It used to do both. Three separate document-level click listeners each acted
+  // on the same event: one closed the menu, another read that very click as a
+  // click-away on the map and cleared the view. So ticking "half-open passages"
+  // and then clicking off to get the menu out of the way threw the finding away
+  // with it. The only way to keep a lens was to close the menu on the audit
+  // button itself — a rule the interface never taught and no one should have to
+  // learn. Dismissal now lives in one place (see the click handler at the end),
+  // and it consumes the click.
+  const popovers = [
+    { menu: setmenu, btn: setbtn, wrap: ".setwrap" },
+    { menu: lensmenu, btn: lensbtn, wrap: ".lenswrap" },
+  ];
+  const popoverOpen = () => popovers.some(p => !p.menu.hidden);
+  // except: the wrapper the click landed in, whose menu is left alone. Clicking
+  // straight from one menu into the other therefore closes the first.
+  function closePopovers(except){
+    for (const p of popovers) {
+      if (p.menu.hidden || (except && except.contains(p.menu))) continue;
+      p.menu.hidden = true;
+      p.btn.setAttribute("aria-expanded", "false");
     }
-  });
+  }
+
   $("#lens-half-n").textContent = half;
   function syncFlowCounts(){
     if (FLOWS) { $("#lens-drop-n").textContent = dropCount(); $("#lens-drop-row").style.display = ""; }
@@ -2248,6 +2269,15 @@ const UI = __PORTOLAN_UI__;
     $("#lens-dead").checked = showDead;
     const n = (h ? 1 : 0) + (d ? 1 : 0) + (showDead ? 1 : 0);
     const c = $("#lenscnt"); c.textContent = n; c.hidden = !n;
+    // Light the button itself, not just its count. Once the menu is dismissed
+    // the lens is the only thing still changing the map, and a lit control is
+    // how you know the view you are looking at is a filtered one.
+    //
+    // A class, not aria-pressed: this button already carries aria-haspopup and
+    // aria-expanded, and a screen reader announcing it as both "expanded" and
+    // "pressed" describes a control that does not exist. The count beside the
+    // label is what carries the state to assistive tech; this is only paint.
+    lensbtn.classList.toggle("lens-on", n > 0);
   }
   // ---------- what-if panel ----------
   // The composer captures only what decides a verdict: from, to, ports,
@@ -2758,24 +2788,31 @@ const UI = __PORTOLAN_UI__;
     else $("#search").focus();
   });
 
-  // Click anywhere outside the interactive surfaces → back to the main view.
+  // One click, one job — and one place that decides which.
+  function clearView(){
+    if (!(pinned || focusNS || queryPair || auditMode || findingFilter)) return false;
+    pinned = focusNS = queryPair = findingFilter = null;
+    if (auditMode) exitAudit();
+    redraw();
+    return true;
+  }
   document.addEventListener("click", e => {
+    // An open popover swallows the click that dismisses it. Anything else would
+    // mean the gesture you use to put the menu away also undoes what you just
+    // chose in it — which is exactly the trap this used to be.
+    if (popoverOpen()) { closePopovers(e.target.closest(".lenswrap, .setwrap")); return; }
     // header (theme) and the stats row (finding chips, reset) manage their
     // own state — a click there must not double as a click-away reset.
     if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .readstrip, header, .wif")) return;
-    if (pinned || focusNS || queryPair || auditMode || findingFilter) {
-      pinned = focusNS = queryPair = findingFilter = null;
-      if (auditMode) exitAudit();
-      redraw();
-    }
+    clearView();
   });
+  // Escape unwinds one layer at a time, outermost first: the modal, then an
+  // open menu, then the view. Never two at once.
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && !polmodal.hidden) { polmodal.hidden = true; return; }
-    if (e.key === "Escape" && (pinned || focusNS || queryPair || auditMode || findingFilter)) {
-      pinned = focusNS = queryPair = findingFilter = null;
-      if (auditMode) exitAudit();
-      redraw();
-    }
+    if (e.key !== "Escape") return;
+    if (!polmodal.hidden) { polmodal.hidden = true; return; }
+    if (popoverOpen()) { closePopovers(); return; }
+    clearView();
   });
 
   let raf;
