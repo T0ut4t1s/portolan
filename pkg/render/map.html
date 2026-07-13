@@ -436,6 +436,9 @@
     padding:12px 16px;border-bottom:1px solid var(--line);}
   .polmodal-head span{font-family:var(--mono);font-size:.82rem;font-weight:600;word-break:break-all;}
   .polmodal-note{padding:6px 16px 0;font-size:.7rem;color:var(--faint);}
+  .polmodal-acts{display:flex;gap:6px;flex:none;align-items:center;}
+  .polmodal-acts .btn{text-decoration:none;}
+  .polmodal-acts .btn.ok{color:var(--allow);border-color:var(--allow);}
   .polmodal pre{margin:0;padding:12px 16px 16px;overflow:auto;font-family:var(--mono);
     font-size:.74rem;line-height:1.5;color:var(--ink-2);}
 
@@ -489,6 +492,12 @@
       <label class="lensrow" id="lens-dead-row" hidden><input type="checkbox" id="lens-dead"><span class="sw dead"></span> unmatched selectors <span class="lr-n" id="lens-dead-n">0</span></label>
     </div>
     </span>
+    <!-- The brief is the takeaway artifact: the findings, the observed drops,
+         the coverage they were seen at, and ready-to-run verification commands,
+         as Markdown you can paste into a chatbot or a ticket. It follows the
+         capture window currently selected, so it describes the map in front of
+         you and not some other one. -->
+    <button class="btn" id="briefbtn" title="Markdown investigation brief — findings, observed drops, and verification commands, for pasting into a chatbot or a ticket">⧉ brief</button>
     <button class="btn stat-reset" id="reset" title="clear all selections and filters"><b>↺</b></button>
   </span>
   <datalist id="nodelist"></datalist>
@@ -604,7 +613,13 @@
 
 <div class="polmodal" id="polmodal" hidden>
   <div class="polmodal-card">
-    <div class="polmodal-head"><span id="polmodal-title"></span><button class="btn" id="polmodal-close">close</button></div>
+    <div class="polmodal-head"><span id="polmodal-title"></span>
+      <span class="polmodal-acts">
+        <button class="btn" id="polmodal-copy">copy</button>
+        <a class="btn" id="polmodal-dl" hidden download>download</a>
+        <button class="btn" id="polmodal-close">close</button>
+      </span>
+    </div>
     <div class="polmodal-note guide" id="polmodal-note">the policy's rules as enforced right now (live from the cluster, shown as JSON) — the full YAML manifest lives in your git repo</div>
     <pre id="polmodal-body"></pre>
   </div>
@@ -2390,12 +2405,12 @@ const UI = __PORTOLAN_UI__;
       });
       if (!resp.ok) throw new Error((await resp.text()).trim().slice(0, 200) || ("HTTP " + resp.status));
       const out = await resp.json();
-      $("#polmodal-title").textContent = "draft CiliumNetworkPolicies — rule " + (i + 1);
-      $("#polmodal-note").textContent =
-        "exactly the manifests the engine simulates for this rule — review, then commit via your GitOps flow; Portolan never applies anything";
-      $("#polmodal-body").textContent = (out.manifests || []).map(m => m.yaml).join("---\n") || "no manifests";
-      polmodal.hidden = false;
-      $("#polmodal-close").focus();
+      openDoc({
+        title: "draft CiliumNetworkPolicies — rule " + (i + 1),
+        note: "exactly the manifests the engine simulates for this rule — review, then commit via your GitOps flow; Portolan never applies anything",
+        body: (out.manifests || []).map(m => m.yaml).join("---\n") || "no manifests",
+        filename: "portolan-draft-policy.yaml",
+      });
     } catch (e) {
       $("#wf-err").textContent = "generate failed: " + (e && e.message || "needs the dashboard (portolan serve)");
     }
@@ -2565,19 +2580,83 @@ const UI = __PORTOLAN_UI__;
     exitAudit();
     runQuery();
   });
-  // clicking a policy name opens the raw-rules overlay
+  // ---------- document overlay ----------
+  // One overlay for anything you might want to take away: a policy's raw rules,
+  // the draft what-if manifests, the investigation brief. Copy is always there;
+  // download appears when the thing is a file you'd plausibly keep.
   const polmodal = $("#polmodal");
-  function showPolicy(key){
-    const rules = (DATA.policyRules || {})[key];
-    if (!rules) return;
-    $("#polmodal-title").textContent = key;
-    $("#polmodal-note").textContent = "the policy's rules as enforced right now (live from the cluster, shown as JSON) — the full YAML manifest lives in your git repo";
-    $("#polmodal-body").textContent = rules
-      .map((r, i) => (rules.length > 1 ? `// rule ${i + 1} of ${rules.length}\n` : "") + JSON.stringify(r, null, 2))
-      .join("\n\n");
+  const dlBtn = $("#polmodal-dl");
+  let dlURL = null;
+  function openDoc({ title, note, body, filename }){
+    $("#polmodal-title").textContent = title;
+    $("#polmodal-note").textContent = note;
+    $("#polmodal-body").textContent = body;
+    // Revoke the previous blob before minting another, or every open leaks one.
+    if (dlURL) { URL.revokeObjectURL(dlURL); dlURL = null; }
+    if (filename) {
+      dlURL = URL.createObjectURL(new Blob([body], { type: "text/plain" }));
+      dlBtn.href = dlURL; dlBtn.download = filename; dlBtn.hidden = false;
+    } else dlBtn.hidden = true;
+    $("#polmodal-copy").textContent = "copy";
+    $("#polmodal-copy").classList.remove("ok");
     polmodal.hidden = false;
     $("#polmodal-close").focus();
   }
+  $("#polmodal-copy").addEventListener("click", async function(){
+    try {
+      await navigator.clipboard.writeText($("#polmodal-body").textContent);
+      this.textContent = "copied"; this.classList.add("ok");
+      setTimeout(() => { this.textContent = "copy"; this.classList.remove("ok"); }, 1400);
+    } catch {
+      // Clipboard access needs a secure context; select the text so the reader
+      // can still take it away with the keyboard rather than being stuck.
+      const r = document.createRange();
+      r.selectNodeContents($("#polmodal-body"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      this.textContent = "press ⌘/Ctrl+C";
+    }
+  });
+
+  function showPolicy(key){
+    const rules = (DATA.policyRules || {})[key];
+    if (!rules) return;
+    openDoc({
+      title: key,
+      note: "the policy's rules as enforced right now (live from the cluster, shown as JSON) — the full YAML manifest lives in your git repo",
+      body: rules.map((r, i) => (rules.length > 1 ? `// rule ${i + 1} of ${rules.length}\n` : "") + JSON.stringify(r, null, 2)).join("\n\n"),
+    });
+  }
+
+  // ---------- investigation brief ----------
+  // Fetches the brief for the window currently on screen, so the document
+  // describes the map you are looking at — ask for a 7d brief while the map
+  // shows 24h and you would be advised about drops you cannot see.
+  //
+  // The brief states the coverage its observations were made at, which is the
+  // part that matters once this lands in a chat window: a model handed "no
+  // drops on this edge" will reason from it confidently, and it has no way to
+  // know whether that silence came from watching all week or blinking once.
+  $("#briefbtn").addEventListener("click", async () => {
+    openDoc({ title: "investigation brief", note: "fetching…", body: "" });
+    try {
+      const q = curWindow ? "?window=" + encodeURIComponent(curWindow) : "";
+      const resp = await fetch("brief.md" + q);
+      if (!resp.ok) {
+        openDoc({ title: "investigation brief", note: "could not generate the brief",
+                  body: (await resp.text()).trim().slice(0, 400) || ("HTTP " + resp.status) });
+        return;
+      }
+      openDoc({
+        title: "investigation brief" + (curWindow ? " · " + curWindow + " window" : ""),
+        note: "Markdown — copy it into a chatbot for advice, or into a ticket. It carries the findings, the observed drops, the coverage they were seen at, and read-only commands to verify each one. It hands over hypotheses, never verdicts.",
+        body: await resp.text(),
+        filename: "portolan-brief.md",
+      });
+    } catch {
+      openDoc({ title: "investigation brief", note: "needs the dashboard",
+                body: "The brief is generated by the server — a static map file has no engine to ask.\n\nRun `portolan serve`, or generate one from the command line:\n\n    portolan audit --brief -o brief.md" });
+    }
+  });
   insp.addEventListener("click", e => {
     const p = e.target.closest(".pol");
     if (p) { showPolicy(p.dataset.pol); e.stopPropagation(); }

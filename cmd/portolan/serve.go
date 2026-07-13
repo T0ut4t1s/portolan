@@ -386,7 +386,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	mux.HandleFunc("GET /{$}", serveBytes(rd(func(s *server) []byte { return s.html }), "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /snapshot.json", serveBytes(rd(func(s *server) []byte { return s.snapJSON }), "application/json"))
 	mux.HandleFunc("GET /audit.json", serveBytes(rd(func(s *server) []byte { return s.audit }), "application/json"))
-	mux.HandleFunc("GET /brief.md", serveBytes(rd(func(s *server) []byte { return s.brief }), "text/markdown; charset=utf-8"))
+	mux.HandleFunc("GET /brief.md", s.briefHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
@@ -518,6 +518,68 @@ func (s *server) whatifHandler(w http.ResponseWriter, r *http.Request) {
 // claims.
 const maxFlowWindow = flowstore.MaxWindow
 
+// windowParam reads an optional ?window= look-back, defaulting to the configured
+// one. Shared by the flow overlay and the brief so the two can never disagree
+// about what "24h" means.
+func (s *server) windowParam(r *http.Request) (time.Duration, error) {
+	q := r.URL.Query().Get("window")
+	if q == "" {
+		return s.flowWindow, nil
+	}
+	d, err := snapshot.ParseWindow(q)
+	if err != nil || d <= 0 {
+		return 0, errors.New("window must be a positive duration, e.g. 15m, 6h, 7d")
+	}
+	if d > maxFlowWindow {
+		return 0, fmt.Errorf("window must be at most %s (the store retains no more)",
+			snapshot.ShortDur(maxFlowWindow))
+	}
+	return d, nil
+}
+
+// briefHandler serves the Markdown investigation brief — the document you hand
+// to an LLM (or a colleague) when you want advice about what the map is showing.
+//
+// It is regenerated for the requested window rather than served from the cached
+// default, because the brief must describe the same traffic the viewer is
+// looking at. Handing someone a 24h brief while their map shows 7d of drops
+// would have them reason about findings they cannot see, and miss ones they can.
+func (s *server) briefHandler(w http.ResponseWriter, r *http.Request) {
+	window, err := s.windowParam(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.mu.RLock()
+	snap, cached := s.snap, s.brief
+	s.mu.RUnlock()
+
+	// No flow store, or no window asked for: the cached brief already describes
+	// the default window, and rebuilding it would say exactly the same thing.
+	if s.flows == nil || snap == nil || window == s.flowWindow {
+		if cached == nil {
+			http.Error(w, "no successful collection yet", http.StatusServiceUnavailable)
+			return
+		}
+		writeBrief(w, cached)
+		return
+	}
+
+	g := graph.Build(snap)
+	if fc, err := s.flows.Capture(r.Context(), window); err == nil {
+		// Swap in the requested window's observations; ComputeAudit reads its
+		// drops straight off g.Flows, so the findings follow.
+		g.Flows = graph.Overlay(g, fc)
+	}
+	writeBrief(w, graph.Brief(g, graph.ComputeAudit(g)))
+}
+
+func writeBrief(w http.ResponseWriter, b []byte) {
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write(b)
+}
+
 // flowsHandler answers the map's capture-window control: the observed overlay
 // for an arbitrary look-back, joined onto the graph the page is already
 // showing.
@@ -531,19 +593,10 @@ func (s *server) flowsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "flow observation is off (start with --flows)", http.StatusNotFound)
 		return
 	}
-	window := s.flowWindow
-	if q := r.URL.Query().Get("window"); q != "" {
-		d, err := snapshot.ParseWindow(q)
-		if err != nil || d <= 0 {
-			http.Error(w, "window must be a positive duration, e.g. 15m, 6h, 7d", http.StatusBadRequest)
-			return
-		}
-		if d > maxFlowWindow {
-			http.Error(w, fmt.Sprintf("window must be at most %s (the store retains no more)",
-				snapshot.ShortDur(maxFlowWindow)), http.StatusBadRequest)
-			return
-		}
-		window = d
+	window, err := s.windowParam(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	s.mu.RLock()

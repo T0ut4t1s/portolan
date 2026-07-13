@@ -409,10 +409,19 @@ the perfect *input* for whatever model you already use, and is the deterministic
 *oracle* that model's output is checked against. Your agent stays yours; Portolan
 stays a read-only instrument.
 
-- **LLM-ready cluster brief** *(planned)* — enrich `portolan audit --brief` into a
-  complete network report: topology, observed flows, findings, ready-to-run
-  verification commands, and a "what to fix" scaffold. Paste it into any LLM for
-  policy advice — greenfield lockdown, or hardening existing rules.
+- **LLM-ready cluster brief** *(available)* — `portolan audit --brief`, or the
+  **brief** button on the map, produces a Markdown report: topology, observed
+  drops, the findings, and ready-to-run verification commands. Copy it into any
+  LLM for policy advice. It hands over hypotheses and evidence, never verdicts.
+
+  Crucially it states the **coverage** its observations were made at, because a
+  brief is exactly where that gets lost: a model handed *"no drops on this edge"*
+  will reason from it confidently, and has no way to know whether the silence
+  came from watching all week or blinking once. So the brief says which — and
+  when coverage is poor it says plainly that absence proves nothing and no rule
+  should be removed on that basis.
+
+  Still planned: a fuller observed-flow section and a "what to fix" scaffold.
 - **Agent tooling (MCP server)** *(exploring)* — expose `snapshot`, `audit`,
   `brief`, and **`whatif` verification** as tools an agent (Claude, Codex, …) can
   drive in your own harness. The loop that makes it trustworthy — *the model drafts
