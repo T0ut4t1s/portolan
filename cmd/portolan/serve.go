@@ -51,6 +51,14 @@ type server struct {
 	// return the same handful of seconds whatever window was picked.
 	flows      snapshot.FlowSource
 	flowWindow time.Duration
+
+	// prevFindings is the finding set from the PREVIOUS collection, which is
+	// what lets the brief say NEW and RESOLVED. Without it every finding is new
+	// forever, and a fix you made is invisible: the finding just quietly stops
+	// appearing and nothing tells you it was you.
+	prevFindings *graph.FindingSet
+	// suppressions are decisions already taken (id → why), loaded once at start.
+	suppressions map[string]string
 }
 
 // envOr returns environment variable k if set, otherwise def.
@@ -195,6 +203,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: standard loading rules, then in-cluster)")
 	flowWindow := fs.Duration("flows", 0, "observe Hubble flows, and show this look-back window on the map by default, e.g. 24h (0: off). Serve mode streams continuously, so the window is a query over what was accumulated — not a request to Hubble, whose buffer holds only seconds")
 	hubbleServer := fs.String("hubble-server", defaultHubbleServer, "Hubble Relay address (plaintext gRPC)")
+	suppressFile := fs.String("suppress", "", "file of `<finding-id> <reason>` lines to withhold from the brief — decisions already taken should not be re-argued daily")
 	// Auth is opt-in; the default is none.
 	authFlags := registerAuthFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -271,7 +280,25 @@ func cmdServe(ctx context.Context, args []string) error {
 	// this can only carry deployment facts, never anything per-user.
 	ui := render.UI{Auth: authn.Enabled()}
 
-	s := &server{flows: flowSource, flowWindow: *flowWindow}
+	// Load decisions already taken. A malformed file is a hard error rather than
+	// a warning: silently suppressing NOTHING when the operator believes they
+	// suppressed something is the wrong way round to fail.
+	var suppressions map[string]string
+	if *suppressFile != "" {
+		f, err := os.Open(*suppressFile)
+		if err != nil {
+			return err
+		}
+		suppressions, err = graph.LoadSuppressions(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "suppressions: %d finding(s) withheld from the brief (%s)\n",
+			len(suppressions), *suppressFile)
+	}
+
+	s := &server{flows: flowSource, flowWindow: *flowWindow, suppressions: suppressions}
 	collect := func() {
 		cctx, cancel := context.WithTimeout(ctx, cycleTimeout)
 		defer cancel()
@@ -303,11 +330,22 @@ func cmdServe(ctx context.Context, args []string) error {
 		snapJSON, _ := json.MarshalIndent(snap, "", "  ")
 		auditJSON, _ := json.MarshalIndent(a, "", "  ")
 
+		// Roll the finding memory forward one cycle: this run's findings become
+		// the baseline the NEXT run diffs against, so "NEW" means new since the
+		// last collection and a finding that goes away is reported as resolved.
+		s.mu.RLock()
+		prev, supp := s.prevFindings, s.suppressions
+		s.mu.RUnlock()
+		brief := graph.BriefWith(g, a, graph.BriefOptions{Previous: prev, Suppressions: supp})
+		next := graph.ComputeFindings(g, a)
+		graph.Diff(next, prev)
+
 		s.mu.Lock()
 		s.html = html
 		s.snapJSON = snapJSON
 		s.audit = auditJSON
-		s.brief = graph.Brief(g, a)
+		s.brief = brief
+		s.prevFindings = next
 		s.snap = snap
 		s.lastOK = time.Now().UTC()
 		s.lastErr = ""
@@ -409,6 +447,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	}
 	mux.HandleFunc("POST /api/whatif", s.whatifHandler)
 	mux.HandleFunc("GET /api/flows", s.flowsHandler)
+	mux.HandleFunc("GET /findings.json", s.findingsHandler)
 	authn.Register(mux) // /login, /logout (no-op in mode none)
 
 	// The gate wraps every route: /healthz and the auth endpoints stay public,
@@ -579,7 +618,33 @@ func (s *server) briefHandler(w http.ResponseWriter, r *http.Request) {
 		// drops straight off g.Flows, so the findings follow.
 		g.Flows = graph.Overlay(g, fc)
 	}
-	writeBrief(w, graph.Brief(g, graph.ComputeAudit(g)))
+	s.mu.RLock()
+	prev, supp := s.prevFindings, s.suppressions
+	s.mu.RUnlock()
+	writeBrief(w, graph.BriefWith(g, graph.ComputeAudit(g),
+		graph.BriefOptions{Previous: prev, Suppressions: supp}))
+}
+
+// findingsHandler serves the sidecar: every finding with a stable id, so a
+// decision made today can still be found tomorrow.
+func (s *server) findingsHandler(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	snap, prev := s.snap, s.prevFindings
+	s.mu.RUnlock()
+	if snap == nil {
+		http.Error(w, "no successful collection yet", http.StatusServiceUnavailable)
+		return
+	}
+	g := graph.Build(snap)
+	set := graph.ComputeFindings(g, graph.ComputeAudit(g))
+	graph.Diff(set, prev)
+	out, err := set.Marshal()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
 }
 
 func writeBrief(w http.ResponseWriter, b []byte) {

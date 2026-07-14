@@ -1,0 +1,19 @@
+{{- if .Values.suppressions }}
+# Decisions already taken, so they stop being re-argued every morning.
+#
+# A suppression HIDES a finding; it never stops Portolan looking for it, and the
+# brief always reports how many were withheld and why. Keeping this in git — with
+# the reason, under review — is the point: the day one of these stops being true,
+# someone has to be able to find it and say so.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-suppressions
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: portolan
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  suppressions: |
+{{ .Values.suppressions | indent 4 }}
+{{- end }}

@@ -110,6 +110,9 @@ func cmdAudit(args []string) error {
 	in := fs.String("i", "snapshot.json", "input snapshot file (- for stdin)")
 	failOn := fs.Bool("fail-on-findings", false, "exit 1 when half-open passages exist (CI gate)")
 	brief := fs.String("brief", "", "also write a Markdown investigation brief for an LLM agent (- for stdout)")
+	findings := fs.String("findings", "", "write the findings sidecar (JSON, stable ids) — feed it back as -previous next run")
+	previous := fs.String("previous", "", "a findings sidecar from an earlier run: the brief then marks NEW / RESOLVED")
+	suppress := fs.String("suppress", "", "file of `<finding-id> <reason>` lines to withhold from the brief")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -120,8 +123,30 @@ func cmdAudit(args []string) error {
 	g := graph.Build(snap)
 	a := graph.ComputeAudit(g)
 
+	var opts graph.BriefOptions
+	if *previous != "" {
+		f, err := os.Open(*previous)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if opts.Previous, err = graph.LoadFindings(f); err != nil {
+			return err
+		}
+	}
+	if *suppress != "" {
+		f, err := os.Open(*suppress)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if opts.Suppressions, err = graph.LoadSuppressions(f); err != nil {
+			return err
+		}
+	}
+
 	if *brief != "" {
-		md := graph.Brief(g, a)
+		md := graph.BriefWith(g, a, opts)
 		if *brief == "-" {
 			if _, err := os.Stdout.Write(md); err != nil {
 				return err
@@ -130,6 +155,26 @@ func cmdAudit(args []string) error {
 			return err
 		} else {
 			fmt.Fprintf(os.Stderr, "wrote investigation brief: %s\n", *brief)
+		}
+	}
+
+	// The sidecar is written LAST, so a run that fails part-way does not leave
+	// behind a "previous" that never corresponded to a brief anyone read.
+	if *findings != "" {
+		set := graph.ComputeFindings(g, a)
+		graph.Diff(set, opts.Previous)
+		out, err := set.Marshal()
+		if err != nil {
+			return err
+		}
+		if *findings == "-" {
+			if _, err := os.Stdout.Write(out); err != nil {
+				return err
+			}
+		} else if err := os.WriteFile(*findings, out, 0o644); err != nil {
+			return err
+		} else {
+			fmt.Fprintf(os.Stderr, "wrote findings sidecar: %s (%d findings)\n", *findings, len(set.Findings))
 		}
 	}
 

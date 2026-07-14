@@ -186,3 +186,16 @@ tolerations: []
 affinity: {}
 podAnnotations: {}
 podLabels: {}
+
+# Findings already triaged, so the brief stops re-arguing them every morning.
+#
+# One `<finding-id> <reason>` per line. Ids come from the brief (`id: 0aa818deec58`)
+# or from /findings.json. The REASON is mandatory: a suppression you cannot audit
+# is a lie you told yourself six months ago, and it will outlive whatever made it
+# true. Suppressed findings are HIDDEN, never deleted — Portolan keeps looking for
+# them, and every brief reports how many were withheld and why.
+#
+#   suppressions: |
+#     0aa818deec58  pgbouncer-db-init is a Job — matching nothing at rest is correct
+#     7b09703fc2da  crowdsec-whitelist is an hourly CronJob
+suppressions: ""

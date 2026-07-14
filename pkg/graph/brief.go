@@ -13,28 +13,99 @@ import (
 	"time"
 )
 
-// Brief renders audit findings as a Markdown investigation brief written
-// for an LLM agent (or a human) with read access to the cluster. The brief
-// hands over hypotheses, evidence, and verification commands — it never
-// hands over conclusions: those belong to the investigator after checking
-// live state.
-func Brief(g *Graph, a *Audit) []byte {
-	var b strings.Builder
-	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
+// prepared is the audit after folding, joining, grouping and ranking — the
+// single shaping pipeline that BOTH the brief and the findings sidecar read.
+//
+// They must not each do their own: an ID derived from a differently-shaped
+// finding names something the reader cannot see, and a suppression keyed on it
+// would silence the wrong row.
+type prepared struct {
+	audit        *Audit
+	x            *crossRef
+	drops        []DropEdge
+	groups       []halfOpenGroup
+	deadExpected []deadRefGroup
+	deadReview   []deadRefGroup
+}
 
+func prepare(g *Graph, a *Audit) prepared {
 	// Fold ephemeral ports BEFORE cross-referencing, so a dynamically-allocated
 	// port is compared as "ephemeral" rather than as a number that will never be
-	// seen again. Everything downstream — the join, the ranking, the rendering —
-	// then sees one stable row per standing problem instead of a new one daily.
-	a = &Audit{
+	// seen again. Everything downstream — the join, the ranking, the rendering,
+	// the IDs — then sees one stable row per standing problem instead of a new
+	// one daily.
+	folded := &Audit{
 		HalfOpen:       a.HalfOpen,
 		NoDefaultDeny:  a.NoDefaultDeny,
 		WorldReachable: a.WorldReachable,
 		DeadRefs:       a.DeadRefs,
 		Drops:          foldEphemeral(a.Drops),
 	}
-	x := newCrossRef(a)
-	a.Drops = rankDrops(a.Drops, x, g.Flows)
+	x := newCrossRef(folded)
+	folded.Drops = rankDrops(folded.Drops, x, g.Flows)
+	expected, review := groupDeadRefs(folded.DeadRefs)
+	return prepared{
+		audit:        folded,
+		x:            x,
+		drops:        folded.Drops,
+		groups:       rankHalfOpen(groupHalfOpen(folded.HalfOpen), x),
+		deadExpected: expected,
+		deadReview:   review,
+	}
+}
+
+// BriefOptions carries what a brief needs to have a MEMORY: what it said last
+// time, and which decisions have already been made.
+type BriefOptions struct {
+	// Previous is the last run's findings. Without it every finding is NEW
+	// forever and a fix is invisible — you change a policy, the finding stops
+	// appearing, and nothing anywhere tells you it was you.
+	Previous *FindingSet
+	// Suppressions maps finding ID → why. Suppressed findings are withheld from
+	// the body and counted at the end: a decision, once made, should not be
+	// re-argued every morning.
+	Suppressions map[string]string
+}
+
+// Brief renders audit findings as a Markdown investigation brief for an LLM
+// agent (or a human) with read access to the cluster. It hands over hypotheses,
+// evidence and verification commands — never conclusions: those belong to the
+// investigator after checking live state. This form has no memory.
+func Brief(g *Graph, a *Audit) []byte { return BriefWith(g, a, BriefOptions{}) }
+
+// BriefWith renders the brief with a memory: diffed against a previous run, and
+// filtered by decisions already taken.
+func BriefWith(g *Graph, a *Audit, opts BriefOptions) []byte {
+	var b strings.Builder
+	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
+
+	p := prepare(g, a)
+	a, x := p.audit, p.x
+
+	// Memory: what is new since last time, what has stuck around, what is gone.
+	cur := ComputeFindings(g, a)
+	resolved := Diff(cur, opts.Previous)
+	status := map[string]string{}
+	for _, f := range cur.Findings {
+		status[f.ID] = f.Status
+	}
+	suppressed := 0
+	hidden := func(id string) bool {
+		if _, ok := opts.Suppressions[id]; ok {
+			suppressed++
+			return true
+		}
+		return false
+	}
+	mark := func(id string) string {
+		if opts.Previous == nil {
+			return "" // nothing to compare against; do not shout NEW at everything
+		}
+		if status[id] == "NEW" {
+			return " · **NEW**"
+		}
+		return ""
+	}
 
 	w("# Portolan investigation brief\n\n")
 	if g.Cluster != "" {
@@ -113,6 +184,22 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 
 `)
 
+	// Resolved first, and unprompted.
+	//
+	// This is the only part of the brief that says you WON. Everything else is a
+	// list of things wrong with your cluster, and a tool whose list only ever
+	// grows teaches you to stop reading it. A finding that has gone away is the
+	// receipt for work already done.
+	if len(resolved) > 0 {
+		w("## ✅ Resolved since the last run (%d)\n\n", len(resolved))
+		w("These were findings last time and are not findings now. Nothing to do — this is the " +
+			"record that something got fixed.\n\n")
+		for _, f := range resolved {
+			w("- `%s` — %s\n", f.Kind, f.Title)
+		}
+		w("\n")
+	}
+
 	n := 0
 	if len(a.Drops) > 0 {
 		n++
@@ -135,6 +222,10 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 				"count scales with how long we were looking, the rate does not.\n\n", g.Flows.Watched)
 		}
 		for _, d := range a.Drops {
+			id := findingID("drop", d.Src, d.Dst, d.Port, d.Reason)
+			if hidden(id) {
+				continue
+			}
 			key := d.Src + "|" + d.Dst + "|" + d.Port
 			var tag string
 			switch {
@@ -144,9 +235,9 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 				tag = " · ⚠ **PORT MISMATCH** — policy declares " +
 					"`" + strings.Join(x.mismatch[key], "`, `") + "` for this pair, not this port"
 			}
-			w("- `%s → %s` %s — **%s** ×%d%s, last seen %s%s%s\n",
+			w("- `%s → %s` %s — **%s** ×%d%s, last seen %s%s%s%s\n",
 				d.Src, d.Dst, d.Port, d.Reason, d.Count, rate(d.Count),
-				d.LastSeen.Format(time.RFC3339), activity(d, g.Flows), tag)
+				d.LastSeen.Format(time.RFC3339), activity(d, g.Flows), tag, mark(id))
 		}
 
 		// The cross-reference, done HERE rather than asked of the reader. The
@@ -197,7 +288,7 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 	//
 	// The fact is (policy, ports, source namespace → destination namespace). The
 	// peers are a detail of it, so they go inside.
-	groups := rankHalfOpen(groupHalfOpen(a.HalfOpen), x)
+	groups := p.groups
 	if len(groups) > 0 {
 		// The recipe is the same shape for every one of them, so it is stated
 		// ONCE, parameterised — not pasted into each finding.
@@ -217,9 +308,15 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 			"the declared port will not touch it.\n\n")
 	}
 	for _, gr := range groups {
+		id := findingID("half-open", strings.Join(gr.Policies, ","),
+			strings.Join(gr.Ports, ","), gr.SrcNS, gr.DstNS)
+		if hidden(id) {
+			continue
+		}
 		n++
-		w("### Finding %d — `%s` → `%s` on %s\n\n", n, gr.SrcNS, gr.DstNS, strings.Join(gr.Ports, ", "))
-		w("Declared by %s.\n\n", "`"+strings.Join(gr.Policies, "`, `")+"`")
+		w("### Finding %d — `%s` → `%s` on %s%s\n\n", n, gr.SrcNS, gr.DstNS,
+			strings.Join(gr.Ports, ", "), mark(id))
+		w("Declared by %s. `id: %s`\n\n", "`"+strings.Join(gr.Policies, "`, `")+"`", id)
 
 		if len(gr.Srcs) == 1 {
 			w("**Sender:** `%s`\n\n", gr.Srcs[0])
@@ -297,7 +394,7 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 
 	if len(a.DeadRefs) > 0 {
 		n++
-		expected, review := groupDeadRefs(a.DeadRefs)
+		expected, review := p.deadExpected, p.deadReview
 		w("## Finding %d — selector references matching no live workload (%d selectors)\n\n",
 			n, len(expected)+len(review))
 		w("Grouped by SELECTOR, not by policy: `pgbouncer-db-init` appearing in fourteen namespaces is " +
@@ -311,7 +408,12 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 				"run. Skim, confirm the naming really is job-like, and move on — they are listed to be " +
 				"dismissed, not investigated.\n\n")
 			for _, r := range expected {
-				w("- `%s` — %d %s\n", r.Selector, len(r.Policies), plural(len(r.Policies), "policy", "policies"))
+				id := findingID("dead-selector", r.Selector)
+				if hidden(id) {
+					continue
+				}
+				w("- `%s` — %d %s `id: %s`\n", r.Selector, len(r.Policies),
+					plural(len(r.Policies), "policy", "policies"), id)
 			}
 			w("\n")
 		}
@@ -322,7 +424,11 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 				"is either a scaled-down/powered-off workload (expected) or a genuinely dead rule " +
 				"(remove it). Check before proposing anything.\n\n")
 			for _, r := range review {
-				w("- `%s`\n", r.Selector)
+				id := findingID("dead-selector", r.Selector)
+				if hidden(id) {
+					continue
+				}
+				w("- `%s`%s `id: %s`\n", r.Selector, mark(id), id)
 				for _, p := range r.Policies {
 					w("  - `%s`\n", p)
 				}
@@ -345,6 +451,24 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 			w("Note that only **%d%%** of the observation window was actually watched, so the "+
 				"absence of observed drops above is weak evidence at best.\n", int(f.Coverage*100+0.5))
 		}
+	}
+
+	// Suppressed findings are HIDDEN, never DELETED, and the brief always says
+	// how many and why. A silent filter is indistinguishable from a blind spot,
+	// and the day one of these decisions stops being true is the day you need to
+	// be able to find it.
+	if suppressed > 0 {
+		w("---\n\n### Suppressed (%d)\n\n", suppressed)
+		w("Withheld from the body above by an explicit decision. They are still being found — " +
+			"suppression hides a finding, it does not stop looking for it. Review when the reason " +
+			"stops being true.\n\n")
+		for id, why := range opts.Suppressions {
+			if _, live := status[id]; !live {
+				continue // suppresses nothing this run; a stale entry, harmless
+			}
+			w("- `%s` — %s\n", id, why)
+		}
+		w("\n")
 	}
 
 	w("---\n\n*Generated by Portolan from declared policies. For enforcement verdicts on draft " +

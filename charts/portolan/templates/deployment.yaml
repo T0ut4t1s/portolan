@@ -72,6 +72,9 @@ spec:
             {{- if $authOn }}
             - --auth-session-ttl={{ .Values.auth.sessionTTL }}
             {{- end }}
+            {{- if .Values.suppressions }}
+            - --suppress=/etc/portolan/suppressions/suppressions
+            {{- end }}
             {{- if $local }}
             - --auth-users-file=/etc/portolan/auth/users
             {{- end }}
@@ -170,6 +173,11 @@ spec:
             # thing to want one should find it, not fall over hours later.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.suppressions }}
+            - name: suppressions
+              mountPath: /etc/portolan/suppressions
+              readOnly: true
+            {{- end }}
             {{- if $local }}
             - name: auth-users
               mountPath: /etc/portolan/auth
@@ -179,6 +187,11 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.suppressions }}
+        - name: suppressions
+          configMap:
+            name: {{ .Release.Name }}-suppressions
+        {{- end }}
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
