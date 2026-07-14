@@ -567,3 +567,92 @@ func TestDeadRefsGroupBySelectorAndSeparateTheExpected(t *testing.T) {
 		t.Error("a Job selector matching nothing at rest is CORRECT — it must not be in the review pile")
 	}
 }
+
+// The wrong fix I INTRODUCED in 0.25.0, caught by review before it hurt anyone.
+//
+// Keycloak's DNS egress rule names the kube-system NAMESPACE, so it fans out to
+// every pod in it. It reaches coredns, which declares ingress — a complete
+// passage, so it never appears as a half-open at all. What DOES appear are the
+// nine other pods in kube-system that were never DNS servers and were never
+// going to receive a DNS query: cilium, kube-vip, metrics-server and friends.
+//
+// Reporting only on those, the conclusion wrote itself — wrongly: "nothing
+// observed across 24h at 100% coverage, therefore the rule is dead; propose
+// removing it." Follow that and you delete a LIVE DNS egress rule, and Keycloak
+// stops resolving. OpenCloud login breaks.
+//
+// A rule with a working sibling is not dead. It is working, and merely loose.
+func TestALiveRuleWithFanOutIsNotCalledDead(t *testing.T) {
+	deadPeers := []string{"cilium", "kube-vip", "metrics-server", "nvidia-device-plugin"}
+
+	// The working passage: keycloak → coredns, ingress declared, carrying traffic.
+	edges := []Edge{{
+		Src: "keycloak/keycloak", Dst: "kube-system/coredns", Ports: []string{"53/UDP"},
+		DeclaredEgress: true, DeclaredIngress: true,
+	}}
+	var halfOpen []Edge
+	for _, p := range deadPeers {
+		e := Edge{
+			Src: "keycloak/keycloak", Dst: "kube-system/" + p, Ports: []string{"53/UDP"},
+			DeclaredEgress: true, DeclaredIngress: false,
+			Policies: []string{"NetworkPolicy/keycloak/keycloak"},
+		}
+		edges = append(edges, e)
+		halfOpen = append(halfOpen, e)
+	}
+
+	g := &Graph{
+		TakenAt: "now", Tool: "portolan", Edges: edges,
+		Namespaces: []Namespace{{Name: "kube-system", DefaultDeny: true, DefaultDenyIngress: true}},
+		Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900, To: time.Now(),
+			// DNS is flowing to coredns, right now, in this very window.
+			Observed: []ObservedEdge{{
+				Src: "keycloak/keycloak", Dst: "kube-system/coredns",
+				Ports: []string{"53/UDP"}, Count: 90210, Declared: true,
+			}},
+			Drops: []DropEdge{},
+		},
+	}
+	out := string(Brief(g, &Audit{HalfOpen: halfOpen}))
+
+	// The load-bearing assertion: it must NOT tell anyone to remove this rule.
+	if strings.Contains(out, "propose removing it") {
+		t.Errorf("a rule that is demonstrably carrying DNS to coredns must never be called dead — "+
+			"acting on this would break Keycloak login\n---\n%s", out)
+	}
+	for _, want := range []string{
+		"NOT dead — it is too loose",
+		"kube-system/coredns",
+		"traffic was observed flowing on it in this very window",
+		"Do not propose removing this rule",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("brief is missing %q — the fan-out is still being read as a dead rule\n---\n%s", want, out)
+		}
+	}
+}
+
+// The other side of the same coin: a rule that reaches NOBODY really is dead,
+// and the tool must still say so. Fixing the false positive must not blind it.
+func TestARuleThatReachesNobodyIsStillCalledDead(t *testing.T) {
+	e := Edge{
+		Src: "old/sender", Dst: "gone/receiver", Ports: []string{"8080/TCP"},
+		DeclaredEgress: true, DeclaredIngress: false,
+		Policies: []string{"CiliumNetworkPolicy/old/sender"},
+	}
+	g := &Graph{
+		TakenAt: "now", Tool: "portolan", Edges: []Edge{e},
+		Namespaces: []Namespace{{Name: "gone", DefaultDeny: true, DefaultDenyIngress: true}},
+		Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900, To: time.Now(),
+			Observed: []ObservedEdge{}, Drops: []DropEdge{},
+		},
+	}
+	out := string(Brief(g, &Audit{HalfOpen: []Edge{e}}))
+	if !strings.Contains(out, "reaches nobody") || !strings.Contains(out, "propose removing it") {
+		t.Errorf("a rule with no working sibling and no traffic at full coverage IS dead — say so\n---\n%s", out)
+	}
+}

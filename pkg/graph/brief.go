@@ -302,10 +302,16 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 			"kubectl get <KIND> -n <POLICY-NS> <POLICY> -o yaml\n" +
 			"# 3. What does the receiving namespace currently accept?\n" +
 			"kubectl get cnp,netpol -n <DST-NS> -o yaml | grep -B3 -A15 ingress\n```\n\n")
-		w("**How to read the outcome:** no drops **and** the sender never targets the peer → dead " +
-			"egress rule, propose removing it. Drops observed **on the declared port** → missing ingress " +
+		w("**How to read the outcome.** Drops observed **on the declared port** → missing ingress " +
 			"allow, propose one. Drops on any *other* port → a different problem entirely, and opening " +
 			"the declared port will not touch it.\n\n")
+		w("Nothing observed is the case to be careful with. It means one of two very different " +
+			"things, and only one of them is \"delete the rule\":\n\n" +
+			"- The rule **reaches nobody** in that namespace → genuinely dead; verify and remove.\n" +
+			"- The rule **reaches someone else fine**, and these peers are collateral from a " +
+			"namespace-wide selector → the rule is **live**. Removing it breaks the working path. " +
+			"Narrow the selector, or suppress the finding.\n\n" +
+			"Each finding below says which. Do not infer it from the silence alone.\n\n")
 	}
 	for _, gr := range groups {
 		id := findingID("half-open", strings.Join(gr.Policies, ","),
@@ -351,11 +357,31 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 				"`%s` first — a dynamic or ephemeral port usually means the policy names the wrong port.\n\n",
 				strings.Join(other, "`, `"), strings.Join(gr.Ports, "`, `"),
 				strings.Join(gr.Ports, "`, `"), strings.Join(other, "`, `"))
-		case g.Flows != nil && g.Flows.Status == "ok" && g.Flows.Coverage >= 0.8:
-			w("**Observed:** nothing. Across %s of watched traffic (%.0f%% coverage) this passage was "+
-				"never attempted. At this coverage that is real evidence the rule is dead rather than "+
-				"broken — verify, then propose removing it.\n\n",
-				g.Flows.Watched, g.Flows.Coverage*100)
+		default:
+			// Nothing observed on the half-open peers. Before calling the rule
+			// dead — which would have someone DELETE it — ask whether the same
+			// rule is reaching anyone successfully. If it is, it is not dead; it
+			// is alive and merely too loose, and removing it breaks the live path.
+			sibs, carrying := workingSiblings(g, gr)
+			switch {
+			case len(sibs) > 0:
+				w("**⚠ This rule is NOT dead — it is too loose.** The same rule reaches `%s` in `%s` "+
+					"successfully%s. Its selector names the *namespace*, so it also matches the %d peer(s) "+
+					"above, which declare no ingress and were never going to receive this traffic. Their "+
+					"silence is the selector fanning out, not a rule nobody uses.\n\n",
+					strings.Join(sibs, "`, `"), gr.DstNS,
+					map[bool]string{true: " — and traffic was observed flowing on it in this very window", false: ""}[carrying],
+					len(gr.Dsts))
+				w("**Do not propose removing this rule.** Deleting it would cut the working passage " +
+					"above. If the noise bothers you, narrow the selector to the peers that actually " +
+					"serve this traffic; otherwise this finding is benign and worth suppressing.\n\n")
+			case g.Flows != nil && g.Flows.Status == "ok" && g.Flows.Coverage >= 0.8:
+				w("**Observed:** nothing, and this rule reaches nobody in `%s` successfully either. "+
+					"Across %s of watched traffic (%.0f%% coverage) the passage was never attempted. At "+
+					"this coverage that is real evidence the rule is dead rather than broken — verify "+
+					"that the peer truly no longer exists, then propose removing it.\n\n",
+					gr.DstNS, g.Flows.Watched, g.Flows.Coverage*100)
+			}
 		}
 
 		var cmds []string
@@ -656,6 +682,75 @@ func rankHalfOpen(groups []halfOpenGroup, x *crossRef) []halfOpenGroup {
 		)
 	})
 	return out
+}
+
+// workingSiblings finds the peers this same rule reaches SUCCESSFULLY: same
+// senders, same destination namespace, overlapping ports, but with the ingress
+// side declared — a complete passage, not a half-open one.
+//
+// This is the difference between a dead rule and a loose selector, and getting
+// it wrong is dangerous.
+//
+// A policy whose egress rule names a NAMESPACE fans out to every workload in
+// it. Keycloak's DNS egress to kube-system reaches coredns — which declares
+// ingress, so it is a working passage and never appears as a half-open. What
+// DOES appear are the nine other pods in kube-system that were never DNS servers
+// and were never going to receive a DNS query: cilium, kube-vip, metrics-server
+// and friends. They are half-open, they carry no traffic, and they never will.
+//
+// Report only on those and the conclusion writes itself, wrongly: "no traffic
+// across 24h at 100% coverage — the rule is dead, propose removing it." Follow
+// it and you delete a LIVE DNS egress rule, and Keycloak stops resolving.
+//
+// The tool already knows the selector is namespace-scoped — it says so, in the
+// same finding. It just was not feeding that back into the conclusion. A rule
+// with a working sibling is not dead. It is working, and merely too loose.
+func workingSiblings(g *Graph, gr halfOpenGroup) (peers []string, carrying bool) {
+	senders := map[string]bool{}
+	for _, s := range gr.Srcs {
+		senders[s] = true
+	}
+	// What actually carried traffic, so "working" can be more than a claim.
+	observed := map[string]bool{}
+	if g.Flows != nil && g.Flows.Status == "ok" {
+		for _, o := range g.Flows.Observed {
+			if o.Count > 0 {
+				observed[o.Src+"|"+o.Dst] = true
+			}
+		}
+	}
+
+	for _, e := range g.Edges {
+		if !senders[e.Src] || !e.DeclaredEgress {
+			continue
+		}
+		dNS, ok := nodeNS(e.Dst)
+		if !ok || dNS != gr.DstNS {
+			continue
+		}
+		// The receiving side accepts: this passage is complete, not half-open.
+		if !e.DeclaredIngress {
+			continue
+		}
+		if !portsOverlap(e.Ports, gr.Ports) {
+			continue
+		}
+		peers = append(peers, e.Dst)
+		if observed[e.Src+"|"+e.Dst] {
+			carrying = true
+		}
+	}
+	slices.Sort(peers)
+	return slices.Compact(peers), carrying
+}
+
+func portsOverlap(a, b []string) bool {
+	for _, p := range a {
+		if p == "any" || slices.Contains(b, p) || slices.Contains(b, "any") {
+			return true
+		}
+	}
+	return false
 }
 
 // forGroup is forHalfOpen over every pair a group covers.
