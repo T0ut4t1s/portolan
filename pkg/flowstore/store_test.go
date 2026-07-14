@@ -358,3 +358,36 @@ func TestWindowQueryNeedsNoWritableTempDir(t *testing.T) {
 		}
 	}
 }
+
+// "24h9m29s watched, 100% of a 24h window" is a sentence that cannot be true,
+// and printing it costs the reader trust in every other figure beside it.
+//
+// The cause: `from` snaps outward to a bucket boundary, so the oldest bucket's
+// observed time reaches back before the window starts and the sum overshoots.
+// The ratio was clamped; the duration was not. Clamp both — the overhang is
+// bucket granularity, not information.
+func TestWatchedNeverExceedsTheWindow(t *testing.T) {
+	s := open(t)
+	e := edge(pod("web", "front"), pod("api", "back"), "8080/TCP")
+
+	// Fill a full hour of buckets, then query the last hour from mid-bucket —
+	// `from` snaps back to the bucket start, pulling in observed time from
+	// before the window.
+	for i := range 8 {
+		at := base.Add(time.Duration(i) * BucketSize)
+		add(t, s, at, BucketSize, map[snapshot.FlowEdgeKey]snapshot.FlowIncrement{e: {Count: 1, LastSeen: at}})
+	}
+	now := base.Add(2*time.Hour + 7*time.Minute) // deliberately mid-bucket
+	fc := capture(t, s, now, time.Hour)
+
+	if fc.WatchedSec > time.Hour.Seconds() {
+		t.Errorf("watched %.0fs of a 1h window — a window cannot be over-watched", fc.WatchedSec)
+	}
+	if fc.Coverage > 1 {
+		t.Errorf("coverage = %.3f, want <= 1", fc.Coverage)
+	}
+	// The two must agree with each other, which is the whole point.
+	if fc.Coverage == 1 && fc.WatchedSec < time.Hour.Seconds() {
+		t.Errorf("100%% covered but only %.0fs watched of 3600s — watched and coverage contradict", fc.WatchedSec)
+	}
+}

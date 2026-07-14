@@ -28,9 +28,13 @@ type FlowOverlay struct {
 	Window string    `json:"window"`
 	From   time.Time `json:"from,omitzero"`
 	To     time.Time `json:"to,omitzero"`
-	// Watched is how much of the window was really observed, Coverage the
-	// fraction (0..1). Low coverage means absence proves nothing.
+	// Watched is how much of the window was really observed (never more than
+	// the window), WatchedSec the same as a number, Coverage the fraction
+	// (0..1). Low coverage means absence proves nothing — and it also means raw
+	// counts are not comparable with another run's, which is what WatchedSec is
+	// for: a rate over watched time is.
 	Watched    string    `json:"watched,omitempty"`
+	WatchedSec float64   `json:"watchedSec,omitempty"`
 	Coverage   float64   `json:"coverage,omitempty"`
 	OldestFlow time.Time `json:"oldestFlow,omitzero"`
 	FlowsSeen  int       `json:"flowsSeen"`
@@ -105,6 +109,7 @@ func overlay(g *Graph, fc *snapshot.FlowCapture, addExternals bool) *FlowOverlay
 		From:       fc.From,
 		To:         fc.To,
 		Watched:    fc.Watched,
+		WatchedSec: fc.WatchedSec,
 		Coverage:   fc.Coverage,
 		OldestFlow: fc.OldestFlow,
 		FlowsSeen:  fc.FlowsSeen,

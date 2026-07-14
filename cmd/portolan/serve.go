@@ -555,9 +555,9 @@ func (s *server) briefHandler(w http.ResponseWriter, r *http.Request) {
 	snap, cached := s.snap, s.brief
 	s.mu.RUnlock()
 
-	// No flow store, or no window asked for: the cached brief already describes
-	// the default window, and rebuilding it would say exactly the same thing.
-	if s.flows == nil || snap == nil || window == s.flowWindow {
+	// Without a flow store there is nothing to recompute against: serve the
+	// brief built at the last collection.
+	if s.flows == nil || snap == nil {
 		if cached == nil {
 			http.Error(w, "no successful collection yet", http.StatusServiceUnavailable)
 			return
@@ -566,6 +566,13 @@ func (s *server) briefHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// With one, always rebuild — even for the default window.
+	//
+	// The cached brief is only refreshed once per collection, so serving it
+	// meant the brief could describe observations up to a whole interval (15
+	// minutes) staler than the map it was opened from: same window, different
+	// numbers, no explanation. A brief is read once and reasoned over hard, so
+	// it has to agree with the thing it was clicked from.
 	g := graph.Build(snap)
 	if fc, err := s.flows.Capture(r.Context(), window); err == nil {
 		// Swap in the requested window's observations; ComputeAudit reads its

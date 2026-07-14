@@ -136,8 +136,19 @@ type FlowCapture struct {
 	// hint that it fell short. A poller then reports 15m of observation having
 	// watched perhaps 1% of it. Coverage makes that shortfall impossible to
 	// miss; a streamed capture reports the truth from the other direction.
-	Watched  string  `json:"watched,omitempty"`
-	Coverage float64 `json:"coverage,omitempty"`
+	// Watched never exceeds Window. The bucket the window starts in overhangs
+	// its own start, so the raw sum of observed time can run a few minutes past
+	// the window asked for — and reporting "24h9m watched, 100% of a 24h
+	// window" is a self-evidently broken sentence that costs the reader trust
+	// in every other number on the page. The overhang is an artifact of bucket
+	// granularity, not information, so it is clamped away here exactly as the
+	// ratio already was.
+	Watched string `json:"watched,omitempty"`
+	// WatchedSec is Watched as a number, so consumers can divide by it. Raw
+	// counts are only comparable between two runs at the same coverage; a rate
+	// over watched time is comparable between any two.
+	WatchedSec float64 `json:"watchedSec,omitempty"`
+	Coverage   float64 `json:"coverage,omitempty"`
 	// OldestFlow is the earliest moment this capture can speak for. When it is
 	// noticeably later than From, absence of an edge means "not observed", not
 	// "did not happen" — even more than usual.

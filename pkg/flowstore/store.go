@@ -357,13 +357,19 @@ func (s *Store) Capture(ctx context.Context, now time.Time, window time.Duration
 	// oldest bucket overhangs it, so the ratio is clamped while the raw figure
 	// is left alone.
 	observed := time.Duration(observedMS.Int64) * time.Millisecond
-	fc.Watched = observed.Round(time.Second).String()
+	// Clamp the duration, not just the ratio. `from` snaps outward to a bucket
+	// boundary, so the oldest bucket's observed time reaches back before the
+	// window starts and the sum can exceed it — which printed as "24h9m29s
+	// watched, 100% of a 24h window", a sentence that is visibly nonsense and
+	// quietly discredits every other figure beside it. The overhang is bucket
+	// granularity, not information.
+	if observed > window {
+		observed = window
+	}
+	fc.Watched = snapshot.ShortDur(observed.Round(time.Second))
+	fc.WatchedSec = observed.Seconds()
 	if window > 0 {
-		ratio := float64(observed) / float64(window)
-		if ratio > 1 {
-			ratio = 1
-		}
-		fc.Coverage = ratio
+		fc.Coverage = float64(observed) / float64(window)
 	}
 	// OldestFlow keeps its old meaning — the earliest moment this capture can
 	// speak for — so consumers written against the polled captures still work.

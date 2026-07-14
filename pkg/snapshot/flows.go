@@ -259,16 +259,19 @@ func (a *flowAggregator) finish() *FlowCapture {
 	// 12s of data and no complaint.
 	if !a.capture.OldestFlow.IsZero() {
 		observed := a.capture.To.Sub(a.capture.OldestFlow)
+		window := a.capture.To.Sub(a.capture.From)
 		if observed < 0 {
 			observed = 0
 		}
-		a.capture.Watched = observed.Round(time.Second).String()
-		if window := a.capture.To.Sub(a.capture.From); window > 0 {
-			ratio := float64(observed) / float64(window)
-			if ratio > 1 {
-				ratio = 1
-			}
-			a.capture.Coverage = ratio
+		// Clamp to the window, so "watched" and "covered" can never contradict
+		// each other in the same sentence.
+		if window > 0 && observed > window {
+			observed = window
+		}
+		a.capture.Watched = ShortDur(observed.Round(time.Second))
+		a.capture.WatchedSec = observed.Seconds()
+		if window > 0 {
+			a.capture.Coverage = float64(observed) / float64(window)
 		}
 	}
 	return a.capture

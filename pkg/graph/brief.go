@@ -6,6 +6,7 @@ package graph
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Brief renders audit findings as a Markdown investigation brief written
@@ -85,10 +86,23 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 		w("These are not topology inferences: the datapath **actually denied** this traffic "+
 			"during the %s window ending %s. Strongest evidence in this brief — a drop that was "+
 			"seen, happened, whatever the coverage was.\n\n",
-			g.Flows.Window, g.Flows.To.Format("2006-01-02 15:04 UTC"))
+			g.Flows.Window, g.Flows.To.Format(time.RFC3339))
+
+		// Counts are raw totals over the time actually watched, so they scale
+		// with coverage: the SAME cluster, sampled at 50% and at 98%, yields
+		// counts that differ ~2x while nothing changed. That is the single most
+		// misleading thing a reader can do with this section — it turns steady
+		// background noise into "the cluster is degrading". So print the rate
+		// beside the count, and say plainly which one to compare.
+		rate, rated := ratePerHour(g.Flows)
+		if rated {
+			w("Counts are raw totals over the %s actually watched. To compare with another run — a "+
+				"different day, a different coverage — use the **per-hour rate**, not the count: the "+
+				"count scales with how long we were looking, the rate does not.\n\n", g.Flows.Watched)
+		}
 		for _, d := range a.Drops {
-			w("- `%s → %s` %s — **%s** ×%d, last seen %s\n",
-				d.Src, d.Dst, d.Port, d.Reason, d.Count, d.LastSeen.Format("15:04:05"))
+			w("- `%s → %s` %s — **%s** ×%d%s, last seen %s\n",
+				d.Src, d.Dst, d.Port, d.Reason, d.Count, rate(d.Count), d.LastSeen.Format(time.RFC3339))
 		}
 		w("\nTriage: `POLICY_DENIED` involving two cluster workloads → almost certainly a missing " +
 			"allow rule (check whether a half-open finding below names the same pair — that pairing is " +
@@ -177,6 +191,35 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 		"changes, run `portolan whatif` against this snapshot. AGPL-3.0-or-later — " +
 		"https://github.com/T0ut4t1s/portolan*\n")
 	return []byte(b.String())
+}
+
+// ratePerHour builds a formatter that renders a raw count as a rate over the
+// time actually watched, and reports whether the rate is meaningful at all.
+//
+// This exists because raw counts are not comparable between runs and every
+// reader assumes they are. The same cluster observed at 50% coverage and at 98%
+// reports counts that differ by ~2x with nothing whatsoever having changed —
+// which reads as a cluster getting worse. The rate is the number that holds
+// still, so it goes next to the count that does not.
+//
+// Below a few minutes of observation a rate is extrapolation dressed as
+// measurement (one drop in 30s is not "120/h"), so it is withheld.
+func ratePerHour(f *FlowOverlay) (func(int) string, bool) {
+	if f == nil || f.WatchedSec < 300 {
+		return func(int) string { return "" }, false
+	}
+	hours := f.WatchedSec / 3600
+	return func(n int) string {
+		r := float64(n) / hours
+		switch {
+		case r >= 10:
+			return fmt.Sprintf(" (≈%.0f/h)", r)
+		case r >= 1:
+			return fmt.Sprintf(" (≈%.1f/h)", r)
+		default:
+			return fmt.Sprintf(" (≈%.2f/h)", r)
+		}
+	}, true
 }
 
 // policyGetCmd turns "Kind/ns/name" or "Kind/name" provenance into a kubectl command.
