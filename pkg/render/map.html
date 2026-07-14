@@ -2801,6 +2801,24 @@ const UI = __PORTOLAN_UI__;
     // mean the gesture you use to put the menu away also undoes what you just
     // chose in it — which is exactly the trap this used to be.
     if (popoverOpen()) { closePopovers(e.target.closest(".lenswrap, .setwrap")); return; }
+
+    // The click has already been dealt with, and the handler re-rendered the
+    // panel out from under it.
+    //
+    // The audit rows' "check" buttons live inside the inspector. Clicking one
+    // runs the passage query, which re-renders the inspector — destroying the
+    // button that was clicked. The event then bubbles to here, where the guard
+    // below asks `e.target.closest(".inspector")` — and closest() on a node that
+    // has been detached from the document walks a broken parent chain and
+    // returns null. The guard missed, clearView() fired, and the very click that
+    // ran the check immediately threw it away. From the outside it looked like
+    // the button only half-worked: it filled the from/to fields and did nothing
+    // else, so you had to click "check" in the toolbar yourself (which works,
+    // because that button lives in .controls and survives the re-render).
+    //
+    // A detached target means SOMEONE ALREADY HANDLED THIS. Leave it alone.
+    if (!e.target.isConnected) return;
+
     // header (theme) and the stats row (finding chips, reset) manage their
     // own state — a click there must not double as a click-away reset.
     if (e.target.closest(".ns, .rail, .controls, .inspector, .warnbar, .readstrip, header, .wif")) return;
