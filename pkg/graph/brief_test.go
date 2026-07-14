@@ -351,7 +351,7 @@ func TestFinishedDropsAreNotDressedUpAsOngoing(t *testing.T) {
 		t.Errorf("live bleed reported as stopped:\n  %s", live)
 	}
 	// And the reader must be told not to act on a stopped drop.
-	if !strings.Contains(out, "Do not open a rule for traffic that is no longer being attempted") {
+	if !strings.Contains(out, "Do not open a rule for traffic nobody is attempting") {
 		t.Error("triage must warn against fixing drops that already stopped")
 	}
 }
@@ -656,3 +656,117 @@ func TestARuleThatReachesNobodyIsStillCalledDead(t *testing.T) {
 		t.Errorf("a rule with no working sibling and no traffic at full coverage IS dead — say so\n---\n%s", out)
 	}
 }
+
+// "seen in 97 of 96 windows" — a number that cannot be true.
+//
+// The count came from the buckets the query actually READ, while the
+// denominator came from the window that was ASKED for. `from` snaps outward to
+// a bucket boundary, so a 24h window reads up to 97 fifteen-minute buckets.
+// Cosmetic, right up until you notice that an impossible number poisons every
+// number beside it — and these numbers now carry instructions.
+func TestBucketCountNeverExceedsItsDenominator(t *testing.T) {
+	now := time.Date(2026, 7, 14, 21, 22, 0, 0, time.UTC)
+	from := now.Add(-24 * time.Hour).Truncate(15 * time.Minute) // snaps outward: 97 buckets
+	g := &Graph{
+		TakenAt: "now", Tool: "portolan",
+		Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900, From: from, To: now,
+			Drops: []DropEdge{{
+				Src: "media-management/cleanuparr", Dst: "entity:world", Port: "443/TCP",
+				Reason: "POLICY_DENIED", Count: 343, Buckets: 97, LastSeen: now.Add(-time.Minute),
+			}},
+		},
+	}
+	line := lineWith(t, string(Brief(g, &Audit{Drops: g.Flows.Drops})), "cleanuparr")
+	if strings.Contains(line, "of 96 windows") {
+		t.Errorf("97 buckets reported against a 96 denominator — impossible, and it discredits "+
+			"every other figure on the line:\n  %s", line)
+	}
+	if !strings.Contains(line, "97 of 97 windows") {
+		t.Errorf("want the denominator to be the range actually read:\n  %s", line)
+	}
+}
+
+// The flapping bug, with the reviewer's own numbers.
+//
+// longhorn-manager → world appears in 48 of 96 windows: by definition it is
+// idle half the time, so its typical gap is ~30 minutes. Judged against a FIXED
+// 30-minute cutoff, any snapshot has a coin-flip chance of landing mid-gap and
+// calling it "stopped" — and "stopped" carries a strong instruction in the
+// triage text ("do not open a rule, find out what changed"). Two briefs 22
+// minutes apart flipped it from ongoing to stopped with nothing whatsoever
+// having changed on the cluster. That is the tool inventing an incident.
+//
+// Silence must be judged against the signal's own cadence, not a constant.
+func TestBurstyDropsDoNotFlipToStoppedInTheirOwnQuietGap(t *testing.T) {
+	now := time.Now()
+	drop := func(buckets int, age time.Duration) *Graph {
+		return &Graph{TakenAt: "now", Tool: "portolan", Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900,
+			From: now.Add(-24 * time.Hour), To: now,
+			Drops: []DropEdge{{
+				Src: "longhorn-system/longhorn-manager", Dst: "entity:world", Port: "443/TCP",
+				Reason: "POLICY_DENIED", Count: 378, Buckets: buckets, LastSeen: now.Add(-age),
+			}},
+		}}
+	}
+
+	// 48 of 96 windows over 24h → a burst roughly every 30 minutes.
+	// 33 minutes of quiet is utterly unremarkable for that signal.
+	g1 := drop(48, 33*time.Minute)
+	line := lineWith(t, string(Brief(g1, auditOf(g1))), "longhorn-manager")
+	if strings.Contains(line, "**stopped**") {
+		t.Errorf("33m of silence from a signal that fires every ~30m is NOT a stop — calling it one "+
+			"tells the reader to go hunt for a change that never happened:\n  %s", line)
+	}
+	if !strings.Contains(line, "~30m") {
+		t.Errorf("the brief must state the cadence it is judging against:\n  %s", line)
+	}
+
+	// Silent for many times its own rhythm: that IS a stop, and must still be called one.
+	g2 := drop(48, 6*time.Hour)
+	line = lineWith(t, string(Brief(g2, auditOf(g2))), "longhorn-manager")
+	if !strings.Contains(line, "**stopped**") {
+		t.Errorf("6h of silence from a signal that fires every ~30m is a real stop:\n  %s", line)
+	}
+	if !strings.Contains(line, "usual") {
+		t.Errorf("say how many times its own gap it has been silent for:\n  %s", line)
+	}
+
+	// A CONTINUOUS signal is different: half an hour of quiet from something
+	// seen in every window really does mean something.
+	cont := drop(96, 45*time.Minute)
+	line = lineWith(t, string(Brief(cont, auditOf(cont))), "longhorn-manager")
+	if !strings.Contains(line, "**stopped**") || !strings.Contains(line, "real change") {
+		t.Errorf("a continuous signal going quiet IS a change — say so:\n  %s", line)
+	}
+}
+
+// The middle state must exist, or every ambiguous case gets forced into a label
+// that carries an instruction it has not earned.
+func TestAmbiguousSilenceGetsItsOwnLabelRatherThanAGuess(t *testing.T) {
+	now := time.Now()
+	// 26 of 96 windows → fires roughly every ~55m. Quiet for 2h: longer than
+	// usual, but not yet damning.
+	g := &Graph{TakenAt: "now", Tool: "portolan", Flows: &FlowOverlay{
+		Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+		WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900,
+		From: now.Add(-24 * time.Hour), To: now,
+		Drops: []DropEdge{{
+			Src: "home-automation/home-assistant", Dst: "entity:world", Port: "5353/UDP",
+			Reason: "POLICY_DENIED", Count: 14, Buckets: 26, LastSeen: now.Add(-2 * time.Hour),
+		}},
+	}}
+	line := lineWith(t, string(Brief(g, &Audit{Drops: g.Flows.Drops})), "home-assistant")
+	if !strings.Contains(line, "**intermittent**") {
+		t.Errorf("neither clearly ongoing nor clearly stopped — say that, do not guess:\n  %s", line)
+	}
+	if !strings.Contains(line, "not* evidence it has stopped") {
+		t.Errorf("the label must disarm the instruction that 'stopped' would carry:\n  %s", line)
+	}
+}
+
+// auditOf is the audit for a graph whose findings are its own observed drops.
+func auditOf(g *Graph) *Audit { return &Audit{Drops: g.Flows.Drops} }

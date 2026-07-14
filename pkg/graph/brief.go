@@ -273,8 +273,14 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 			"job. Verify the exposure is meant to be closed rather than rushing to open it.\n" +
 			"- **Other reasons** (`VLAN_FILTERED`, `CT_MAP_INSERTION_FAILED`) are datapath conditions, " +
 			"not policy — investigate separately.\n" +
-			"- **A drop marked `stopped`** already ended. Do not open a rule for traffic that is no " +
-			"longer being attempted; find out what changed instead.\n" +
+			"- **A drop marked `stopped`** already ended, and has been silent for far longer than its " +
+			"own rhythm would explain. Do not open a rule for traffic nobody is attempting; find out " +
+			"what changed instead.\n" +
+			"- **A drop marked `intermittent`** is quiet right now but not for long enough to mean " +
+			"anything — it fires in bursts and you have caught it between them. Treat it as ongoing. " +
+			"Judging silence against a fixed clock rather than the signal's own cadence flips such a " +
+			"drop between 'ongoing' and 'stopped' from one run to the next while nothing on the " +
+			"cluster changes at all.\n" +
 			"\n```sh\n# Watch the pair live:\nhubble observe --verdict DROPPED " +
 			"--from-namespace <src-ns> --to-namespace <dst-ns> --since 1h -o compact\n```\n\n")
 	}
@@ -967,35 +973,84 @@ func activity(d DropEdge, f *FlowOverlay) string {
 		age = 0
 	}
 	bucket := time.Duration(f.BucketSec) * time.Second
-	recent := age <= 2*bucket
-	total := int(math.Ceil(f.WatchedSec / f.BucketSec))
 
-	// Too little history to speak of a habit at all.
+	// The denominator is the range the query actually READ, not the window that
+	// was asked for.
 	//
-	// This guard is load-bearing, and I only found out why by running it against
+	// `from` snaps outward to a bucket boundary, so a 24h window reads up to 97
+	// fifteen-minute buckets while WatchedSec still says 24h — which is how
+	// "seen in 97 of 96 windows" got printed. It is cosmetic only until you
+	// notice that a number which cannot be true poisons every number beside it,
+	// and these numbers are now load-bearing.
+	span := f.To.Sub(f.From)
+	if f.From.IsZero() || span <= 0 {
+		span = time.Duration(f.WatchedSec) * time.Second
+	}
+	total := int(math.Ceil(span.Seconds() / f.BucketSec))
+	if total < d.Buckets {
+		total = d.Buckets // belt and braces: never report N of fewer-than-N
+	}
+
+	// Too little history to speak of a habit at all. (Found by running against
 	// the cluster: with seven minutes watched and fifteen-minute buckets the
 	// denominator rounded to ZERO, so "seen in every window" was trivially true
-	// and a single ×1 drop got labelled "ongoing, continuously". A pattern
-	// claimed from one sighting in one window is not a measurement, it is a
-	// coin toss with a confident voice.
+	// and a single ×1 drop came out "ongoing, continuously". A pattern claimed
+	// from one sighting in one window is a coin toss with a confident voice.)
 	if total < 4 {
-		if recent {
+		if age <= 2*bucket {
 			return fmt.Sprintf(" — last seen %s ago (too little history yet to say whether it recurs)", roughly(age))
 		}
 		return fmt.Sprintf(" — **stopped**: nothing for %s", roughly(age))
 	}
 
-	switch {
-	case !recent && d.Buckets == 1:
+	// One or two sightings is a burst, not a cadence. Estimating an interval
+	// from two points is arithmetic, not evidence.
+	if d.Buckets <= 2 {
+		if age <= 2*bucket {
+			return fmt.Sprintf(" — a brief burst, %s ago — not yet a pattern", roughly(age))
+		}
 		return fmt.Sprintf(" — **stopped**: a single burst %s ago, nothing since", roughly(age))
-	case !recent:
-		return fmt.Sprintf(" — **stopped** %s ago (was seen in %d of %d windows)", roughly(age), d.Buckets, total)
-	case d.Buckets*10 >= total*9:
-		return fmt.Sprintf(" — **ongoing**, continuously (seen in %d of %d windows)", d.Buckets, total)
-	case d.Buckets == 1:
-		return fmt.Sprintf(" — a single burst, %s ago — not yet a pattern", roughly(age))
+	}
+
+	// A signal that is on in almost every window is CONTINUOUS: silence from it
+	// means something, and a couple of buckets is enough to call it.
+	if d.Buckets*10 >= total*9 {
+		if age <= 2*bucket {
+			return fmt.Sprintf(" — **ongoing**, continuously (seen in %d of %d windows)", d.Buckets, total)
+		}
+		return fmt.Sprintf(" — **stopped** %s ago (had been continuous, %d of %d windows — so this "+
+			"silence is a real change)", roughly(age), d.Buckets, total)
+	}
+
+	// Everything else is BURSTY, and this is where a fixed cutoff does real harm.
+	//
+	// "Stopped" carries a strong instruction in the triage above — do not open a
+	// rule for it, find out what changed. Applied to a bursty signal against a
+	// constant 30-minute threshold, that instruction fires on a coin toss:
+	// longhorn-manager appears in 48 of 96 windows, so it is idle half the time
+	// by definition, and any snapshot has an even chance of landing mid-gap.
+	// Two briefs 22 minutes apart flipped it from "ongoing" to "stopped" with
+	// nothing whatsoever having changed on the cluster.
+	//
+	// So judge the silence against the signal's OWN cadence. Seen in 48 of 96
+	// windows over a day, its typical gap is about half an hour — 33 minutes of
+	// quiet is unremarkable. Seen in 96 of 96, ten minutes of quiet is not.
+	gap := span / time.Duration(d.Buckets)
+	switch {
+	case age <= 2*bucket || age <= gap*3/2:
+		return fmt.Sprintf(" — **ongoing**, intermittently (seen in %d of %d windows, typically every ~%s)",
+			d.Buckets, total, roughly(gap))
+	case age <= gap*3:
+		// Genuinely ambiguous: quiet, but not quiet for long enough to mean
+		// anything given how this signal normally behaves. Say exactly that,
+		// rather than forcing it into a bucket that carries an instruction.
+		return fmt.Sprintf(" — **intermittent**: last burst %s ago, and it typically fires every ~%s — "+
+			"so this silence is within its normal rhythm and is *not* evidence it has stopped "+
+			"(seen in %d of %d windows)", roughly(age), roughly(gap), d.Buckets, total)
 	default:
-		return fmt.Sprintf(" — **ongoing**, intermittently (seen in %d of %d windows)", d.Buckets, total)
+		return fmt.Sprintf(" — **stopped** %s ago — silent for over %.0f× its usual ~%s gap "+
+			"(was seen in %d of %d windows)", roughly(age), age.Seconds()/gap.Seconds(), roughly(gap),
+			d.Buckets, total)
 	}
 }
 
