@@ -149,6 +149,10 @@ type FlowCapture struct {
 	// over watched time is comparable between any two.
 	WatchedSec float64 `json:"watchedSec,omitempty"`
 	Coverage   float64 `json:"coverage,omitempty"`
+	// BucketSec is the width of a time bucket, and the denominator for
+	// FlowEdge.Buckets: "seen in 3 of the 96 buckets in this window". Zero when
+	// the source is not bucketed (a one-shot buffer read).
+	BucketSec float64 `json:"bucketSec,omitempty"`
 	// OldestFlow is the earliest moment this capture can speak for. When it is
 	// noticeably later than From, absence of an edge means "not observed", not
 	// "did not happen" — even more than usual.
@@ -220,7 +224,21 @@ type FlowEdge struct {
 	// DROPPED edges.
 	DropReason string    `json:"dropReason,omitempty"`
 	Count      int       `json:"count"`
+	FirstSeen  time.Time `json:"firstSeen,omitzero"`
 	LastSeen   time.Time `json:"lastSeen,omitzero"`
+	// Buckets is how many distinct time buckets of the window this edge was
+	// seen in — the difference between a burst and a habit, MEASURED.
+	//
+	// A total alone cannot tell them apart, and the two demand opposite
+	// responses. 32 drops that all landed inside one 15-minute bucket
+	// thirteen hours ago is a pod that had a bad startup and recovered:
+	// nothing to do. 32 drops spread across every bucket in the window is
+	// something bleeding right now. Printed identically — as they were —
+	// the first sends you chasing a problem that already fixed itself.
+	//
+	// Zero when the source cannot know (a one-shot buffer read has no
+	// buckets), which callers must treat as "unknown", never as "never".
+	Buckets int `json:"buckets,omitempty"`
 }
 
 // Policy wraps one policy object. Rules carries the object's rule payloads

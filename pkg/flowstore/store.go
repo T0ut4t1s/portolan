@@ -282,19 +282,26 @@ func (s *Store) Capture(ctx context.Context, now time.Time, window time.Duration
 	from := now.Add(-window).Truncate(BucketSize)
 
 	fc := &snapshot.FlowCapture{
-		Status: "ok",
-		Source: snapshot.FlowSourceStream,
-		Window: snapshot.ShortDur(window),
-		From:   from,
-		To:     now,
-		Edges:  []snapshot.FlowEdge{},
+		Status:    "ok",
+		Source:    snapshot.FlowSourceStream,
+		Window:    snapshot.ShortDur(window),
+		From:      from,
+		To:        now,
+		BucketSec: BucketSize.Seconds(),
+		Edges:     []snapshot.FlowEdge{},
 	}
 
+	// COUNT(DISTINCT bucket) is how a burst is told from a habit, and it costs
+	// nothing: the rows are already being scanned. An edge seen in 1 of 96
+	// buckets fired once and stopped; one seen in 95 of 96 is still bleeding.
+	// MIN(bucket) dates the first sighting (to bucket resolution), so "it all
+	// happened at 06:32 and never again" becomes a statement the brief can make.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT e.src_ns, e.src_name, e.src_kind, e.src_entity,
 		       e.dst_ns, e.dst_name, e.dst_kind, e.dst_entity,
 		       e.port, e.verdict, e.drop_reason,
-		       SUM(b.count), MAX(b.last_seen)
+		       SUM(b.count), MAX(b.last_seen),
+		       MIN(b.bucket), COUNT(DISTINCT b.bucket)
 		FROM bucket_count b JOIN edge e ON e.id = b.edge_id
 		WHERE b.bucket >= ?
 		GROUP BY e.id
@@ -307,17 +314,21 @@ func (s *Store) Capture(ctx context.Context, now time.Time, window time.Duration
 
 	for rows.Next() {
 		var (
-			e        snapshot.FlowEdge
-			lastSeen int64
+			e                  snapshot.FlowEdge
+			lastSeen, firstBkt int64
 		)
 		if err := rows.Scan(
 			&e.Src.Namespace, &e.Src.Name, &e.Src.Kind, &e.Src.Entity,
 			&e.Dst.Namespace, &e.Dst.Name, &e.Dst.Kind, &e.Dst.Entity,
 			&e.Port, &e.Verdict, &e.DropReason, &e.Count, &lastSeen,
+			&firstBkt, &e.Buckets,
 		); err != nil {
 			return nil, fmt.Errorf("flow store: scanning edge: %w", err)
 		}
 		e.LastSeen = time.Unix(lastSeen, 0).UTC()
+		// FirstSeen is the start of the earliest bucket holding this edge, so it
+		// is an upper bound on how long ago it began — never a precise instant.
+		e.FirstSeen = time.Unix(firstBkt, 0).UTC()
 		fc.Edges = append(fc.Edges, e)
 	}
 	if err := rows.Err(); err != nil {

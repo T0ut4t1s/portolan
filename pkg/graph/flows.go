@@ -33,8 +33,10 @@ type FlowOverlay struct {
 	// (0..1). Low coverage means absence proves nothing — and it also means raw
 	// counts are not comparable with another run's, which is what WatchedSec is
 	// for: a rate over watched time is.
-	Watched    string    `json:"watched,omitempty"`
-	WatchedSec float64   `json:"watchedSec,omitempty"`
+	Watched    string  `json:"watched,omitempty"`
+	WatchedSec float64 `json:"watchedSec,omitempty"`
+	// BucketSec is the bucket width, the denominator for DropEdge.Buckets.
+	BucketSec  float64   `json:"bucketSec,omitempty"`
 	Coverage   float64   `json:"coverage,omitempty"`
 	OldestFlow time.Time `json:"oldestFlow,omitzero"`
 	FlowsSeen  int       `json:"flowsSeen"`
@@ -68,12 +70,17 @@ type ObservedEdge struct {
 // DropEdge is denied traffic between two map nodes, kept per-port and
 // per-reason (unlike Observed, aggregating drops would blur the alert).
 type DropEdge struct {
-	Src      string    `json:"s"`
-	Dst      string    `json:"d"`
-	Port     string    `json:"port,omitempty"`
-	Reason   string    `json:"reason,omitempty"`
-	Count    int       `json:"n"`
-	LastSeen time.Time `json:"last,omitzero"`
+	Src       string    `json:"s"`
+	Dst       string    `json:"d"`
+	Port      string    `json:"port,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Count     int       `json:"n"`
+	FirstSeen time.Time `json:"first,omitzero"`
+	LastSeen  time.Time `json:"last,omitzero"`
+	// Buckets is how many distinct time buckets this drop appeared in — a
+	// burst told from a habit. See snapshot.FlowEdge.Buckets; 0 means unknown,
+	// not never.
+	Buckets int `json:"buckets,omitempty"`
 }
 
 // attachFlows joins a snapshot's flow capture onto the built graph and hangs
@@ -110,6 +117,7 @@ func overlay(g *Graph, fc *snapshot.FlowCapture, addExternals bool) *FlowOverlay
 		To:         fc.To,
 		Watched:    fc.Watched,
 		WatchedSec: fc.WatchedSec,
+		BucketSec:  fc.BucketSec,
 		Coverage:   fc.Coverage,
 		OldestFlow: fc.OldestFlow,
 		FlowsSeen:  fc.FlowsSeen,
@@ -192,6 +200,15 @@ func overlay(g *Graph, fc *snapshot.FlowCapture, addExternals bool) *FlowOverlay
 			d.Count += fe.Count
 			if fe.LastSeen.After(d.LastSeen) {
 				d.LastSeen = fe.LastSeen
+			}
+			if !fe.FirstSeen.IsZero() && (d.FirstSeen.IsZero() || fe.FirstSeen.Before(d.FirstSeen)) {
+				d.FirstSeen = fe.FirstSeen
+			}
+			// Several flow edges can fold into one DropEdge (distinct pods of the
+			// same workload). Take the widest spread: if ANY of them was seen
+			// across the whole window, the drop is ongoing.
+			if fe.Buckets > d.Buckets {
+				d.Buckets = fe.Buckets
 			}
 		}
 	}
