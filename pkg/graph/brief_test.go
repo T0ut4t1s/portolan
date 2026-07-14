@@ -218,20 +218,63 @@ func TestPairMatchWithDifferentPortIsNotAConfirmation(t *testing.T) {
 	}
 	out := string(Brief(g, a))
 
-	// Assert on the drop LINE: "CONFIRMED" also appears in the agent-instruction
-	// glossary, where it means something else entirely.
-	if line := lineWith(t, out, "38906"); strings.Contains(line, "CONFIRMED") {
+	// 38906 is above the ephemeral floor, so it is folded to `ephemeral/TCP` —
+	// which is the whole point: the number changes every run, the fact does not.
+	// Assert on the drop LINE, because "CONFIRMED" also appears in the
+	// agent-instruction glossary where it means something else.
+	if line := lineWith(t, out, "ephemeral/TCP"); strings.Contains(line, "CONFIRMED") {
 		t.Errorf("a pair match on a DIFFERENT port must not be reported as confirmed:\n  %s", line)
+	}
+	if strings.Contains(out, "38906") {
+		t.Error("a dynamically-allocated port number is noise: it must be folded, not printed")
 	}
 	for _, want := range []string{
 		"PORT MISMATCH",
 		"Denied on a port no policy declares",
-		"denied on 38906/TCP",
-		"Do not apply the fix suggested below to that traffic",
+		"denied on ephemeral/TCP",
+		"The fix above does not apply to that traffic",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("brief is missing %q — the wrong fix is still reachable\n---\n%s", want, out)
 		}
+	}
+}
+
+// Longhorn's instance managers are denied on a fresh high port every run —
+// 37164, then 38906, then 33582. Printed literally, the same standing problem
+// looks brand new every day: nothing matches between two briefs, so there can
+// be no diff, no suppression, no memory. The number carries no information;
+// that it is ephemeral does.
+func TestEphemeralPortsFoldIntoOneStableRow(t *testing.T) {
+	now := time.Now()
+	const im, lm = "longhorn-system/instance-manager-b0258", "longhorn-system/longhorn-manager"
+	drop := func(port string, n int) DropEdge {
+		return DropEdge{Src: im, Dst: lm, Port: port, Reason: "POLICY_DENIED",
+			Count: n, Buckets: 1, LastSeen: now.Add(-time.Hour)}
+	}
+	g := &Graph{
+		TakenAt: "now", Tool: "portolan",
+		Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900, To: now,
+			// Three runs' worth of churn, plus one real service port.
+			Drops: []DropEdge{drop("37164/TCP", 1), drop("38906/TCP", 2), drop("33582/TCP", 1), drop("9500/TCP", 5)},
+		},
+	}
+	out := string(Brief(g, &Audit{Drops: g.Flows.Drops}))
+
+	for _, gone := range []string{"37164", "38906", "33582"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("ephemeral port %s still printed — the row will churn again tomorrow", gone)
+		}
+	}
+	line := lineWith(t, out, "ephemeral/TCP")
+	if !strings.Contains(line, "×4") {
+		t.Errorf("the three ephemeral drops must fold into ONE row summing their counts (×4):\n  %s", line)
+	}
+	// A real service port is information and must survive untouched.
+	if !strings.Contains(out, "9500/TCP") {
+		t.Errorf("a real service port must not be folded away\n---\n%s", out)
 	}
 }
 
@@ -390,7 +433,8 @@ func TestNoHabitClaimedFromTooLittleHistory(t *testing.T) {
 			}},
 		},
 	}
-	line := lineWith(t, string(Brief(g, &Audit{Drops: g.Flows.Drops})), "33582")
+	// 33582 folds to ephemeral/TCP — see TestEphemeralPortsFoldIntoOneStableRow.
+	line := lineWith(t, string(Brief(g, &Audit{Drops: g.Flows.Drops})), "ephemeral/TCP")
 	if strings.Contains(line, "continuously") || strings.Contains(line, "ongoing") {
 		t.Errorf("one drop, in one window, over seven minutes is not an ongoing pattern:\n  %s", line)
 	}
@@ -418,5 +462,108 @@ func TestIntermittentDropsAreNamedAsSuch(t *testing.T) {
 	line := lineWith(t, string(Brief(g, &Audit{Drops: g.Flows.Drops})), "dragonfly")
 	if !strings.Contains(line, "intermittently") || !strings.Contains(line, "11 of 96 windows") {
 		t.Errorf("a drop in 11 of 96 windows is intermittent — say so, with the numbers:\n  %s", line)
+	}
+}
+
+// Keycloak's ONE DNS egress rule became NINE findings — one per pod that
+// happens to live in kube-system — each with the same policy, the same port,
+// the same diagnosis and the same nine-line verify recipe. That is one fact
+// stated nine times, and a brief that repeats itself is a brief that gets
+// skimmed.
+func TestHalfOpenFanOutIsOneFindingNotNine(t *testing.T) {
+	peers := []string{"cilium", "cilium-envoy", "cilium-operator", "hubble-relay",
+		"intel-gpu-plugin", "kube-vip", "local-path-provisioner", "metrics-server", "nvidia-device-plugin"}
+	var edges []Edge
+	for _, p := range peers {
+		edges = append(edges, Edge{
+			Src: "keycloak/keycloak", Dst: "kube-system/" + p,
+			Ports:    []string{"53/UDP"},
+			Policies: []string{"NetworkPolicy/keycloak/keycloak"},
+		})
+	}
+	g := &Graph{TakenAt: "now", Tool: "portolan"}
+	out := string(Brief(g, &Audit{HalfOpen: edges}))
+
+	if n := strings.Count(out, "### Finding "); n != 1 {
+		t.Errorf("nine peers behind one policy+port is ONE finding, got %d\n---\n%s", n, out)
+	}
+	if !strings.Contains(out, "**Unreachable peers (9)**") {
+		t.Errorf("the nine peers must appear as a list INSIDE the finding\n---\n%s", out)
+	}
+	for _, p := range peers {
+		if !strings.Contains(out, "kube-system/"+p) {
+			t.Errorf("peer %q was lost in the grouping — dedup must not drop information", p)
+		}
+	}
+	// The recipe is identical for every half-open, so it is stated once.
+	if n := strings.Count(out, "hubble observe --from-namespace <SRC-NS>"); n != 1 {
+		t.Errorf("the verify recipe must be printed once, parameterised, got %d copies", n)
+	}
+}
+
+// A drop bleeding 57/hour right now sat BELOW a blip that happened once and
+// stopped, because "c" comes before "j". The top of the list is the only part
+// most readers reach.
+func TestDropsAreRankedByConsequenceNotAlphabet(t *testing.T) {
+	now := time.Now()
+	g := &Graph{
+		TakenAt: "now", Tool: "portolan",
+		Flows: &FlowOverlay{
+			Status: "ok", Source: "stream", Window: "24h", Watched: "24h",
+			WatchedSec: 24 * 3600, Coverage: 1, BucketSec: 900, To: now,
+			Drops: []DropEdge{
+				// alphabetically first, but dead for hours and utterly trivial
+				{Src: "aaa/blip", Dst: "entity:world", Port: "65001/UDP", Reason: "POLICY_DENIED",
+					Count: 1, Buckets: 1, LastSeen: now.Add(-6 * time.Hour)},
+				// alphabetically last, but bleeding right now
+				{Src: "zzz/cleanuparr", Dst: "entity:world", Port: "443/TCP", Reason: "POLICY_DENIED",
+					Count: 343, Buckets: 96, LastSeen: now.Add(-10 * time.Second)},
+			},
+		},
+	}
+	out := string(Brief(g, &Audit{Drops: g.Flows.Drops}))
+	live := strings.Index(out, "zzz/cleanuparr")
+	dead := strings.Index(out, "aaa/blip")
+	if live < 0 || dead < 0 {
+		t.Fatalf("both drops should appear\n---\n%s", out)
+	}
+	if live > dead {
+		t.Error("a drop still bleeding must outrank one that stopped six hours ago, whatever its name sorts as")
+	}
+}
+
+// 54 dead-selector lines, of which the overwhelming majority were
+// `pgbouncer-db-init` — ONE Job deployed into fourteen namespaces, correctly
+// matching nothing because it is not running. Burying the handful of real
+// questions under that is how a brief teaches its reader to skip a section.
+func TestDeadRefsGroupBySelectorAndSeparateTheExpected(t *testing.T) {
+	var refs []string
+	for _, ns := range []string{"authentik", "freeradius", "immich", "keycloak", "monitoring", "n8n"} {
+		refs = append(refs, "CiliumNetworkPolicy/"+ns+"/pgbouncer-db-init → app=pgbouncer-db-init")
+	}
+	refs = append(refs,
+		"CiliumNetworkPolicy/open-webui/searxng → app.kubernetes.io/name=searxng",
+		"CiliumNetworkPolicy/hermes-agent/hindsight → k8s:io.kubernetes.pod.namespace=coder",
+	)
+	out := string(Brief(&Graph{TakenAt: "now", Tool: "portolan"}, &Audit{DeadRefs: refs}))
+
+	if !strings.Contains(out, "(3 selectors)") {
+		t.Errorf("8 lines are 3 selectors — group by selector, not policy\n---\n%s", out)
+	}
+	if !strings.Contains(out, "app=pgbouncer-db-init` — 6 policies") {
+		t.Errorf("the shared selector must be stated once with its policy count\n---\n%s", out)
+	}
+	if !strings.Contains(out, "Expected — run-to-completion workloads") {
+		t.Errorf("job-like selectors must be split off as expected\n---\n%s", out)
+	}
+	// The two that are NOT job-like are the ones actually worth reading.
+	look := out[strings.Index(out, "Worth a look"):]
+	for _, want := range []string{"searxng", "hindsight"} {
+		if !strings.Contains(look, want) {
+			t.Errorf("%q is not job-like and belongs under 'worth a look'\n---\n%s", want, out)
+		}
+	}
+	if strings.Contains(look, "pgbouncer-db-init") {
+		t.Error("a Job selector matching nothing at rest is CORRECT — it must not be in the review pile")
 	}
 }

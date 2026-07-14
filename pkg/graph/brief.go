@@ -4,9 +4,11 @@
 package graph
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,7 +22,19 @@ func Brief(g *Graph, a *Audit) []byte {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 
+	// Fold ephemeral ports BEFORE cross-referencing, so a dynamically-allocated
+	// port is compared as "ephemeral" rather than as a number that will never be
+	// seen again. Everything downstream — the join, the ranking, the rendering —
+	// then sees one stable row per standing problem instead of a new one daily.
+	a = &Audit{
+		HalfOpen:       a.HalfOpen,
+		NoDefaultDeny:  a.NoDefaultDeny,
+		WorldReachable: a.WorldReachable,
+		DeadRefs:       a.DeadRefs,
+		Drops:          foldEphemeral(a.Drops),
+	}
 	x := newCrossRef(a)
+	a.Drops = rankDrops(a.Drops, x, g.Flows)
 
 	w("# Portolan investigation brief\n\n")
 	if g.Cluster != "" {
@@ -173,57 +187,90 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 			"\n```sh\n# Watch the pair live:\nhubble observe --verdict DROPPED " +
 			"--from-namespace <src-ns> --to-namespace <dst-ns> --since 1h -o compact\n```\n\n")
 	}
-	for _, e := range a.HalfOpen {
+	// Half-open passages, GROUPED.
+	//
+	// One policy allowing keycloak out to kube-system on 53/UDP produced nine
+	// findings — one per pod that happens to live in kube-system — each with the
+	// same policy, the same port, the same diagnosis and the same nine-line
+	// verify recipe. Longhorn produced three. That is one fact stated sixteen
+	// times, and a brief that repeats itself is a brief that gets skimmed.
+	//
+	// The fact is (policy, ports, source namespace → destination namespace). The
+	// peers are a detail of it, so they go inside.
+	groups := rankHalfOpen(groupHalfOpen(a.HalfOpen), x)
+	if len(groups) > 0 {
+		// The recipe is the same shape for every one of them, so it is stated
+		// ONCE, parameterised — not pasted into each finding.
+		w("## Half-open passages (%d)\n\n", len(groups))
+		w("Egress declared per-peer, into a default-deny namespace that never declares the matching " +
+			"ingress. If the traffic is ever sent it is allowed out and dropped on arrival.\n\n")
+		w("**How to verify any of them** (substitute from the finding):\n\n```sh\n" +
+			"# 1. Is this path actually attempted? Drops here confirm a real gap:\n" +
+			"hubble observe --from-namespace <SRC-NS> --to-namespace <DST-NS> --verdict DROPPED --since 1h -o compact\n" +
+			"# 2. What does the declaring policy actually say?\n" +
+			"kubectl get <KIND> -n <POLICY-NS> <POLICY> -o yaml\n" +
+			"# 3. What does the receiving namespace currently accept?\n" +
+			"kubectl get cnp,netpol -n <DST-NS> -o yaml | grep -B3 -A15 ingress\n```\n\n")
+		w("**How to read the outcome:** no drops **and** the sender never targets the peer → dead " +
+			"egress rule, propose removing it. Drops observed **on the declared port** → missing ingress " +
+			"allow, propose one. Drops on any *other* port → a different problem entirely, and opening " +
+			"the declared port will not touch it.\n\n")
+	}
+	for _, gr := range groups {
 		n++
-		srcNS, _ := nodeNS(e.Src)
-		dstNS, _ := nodeNS(e.Dst)
-		w("## Finding %d — half-open passage: `%s → %s` (%s)\n\n", n, e.Src, e.Dst, strings.Join(e.Ports, ", "))
-		w("**What the topology says:** egress is declared per-peer by:\n\n")
-		for _, p := range e.Policies {
-			w("- `%s`\n", p)
-		}
-		w("\n…but namespace `%s` is default-deny and **no ingress rule accepts this passage**. "+
-			"If this traffic is ever sent, it is allowed out of `%s` and dropped on arrival.\n\n", dstNS, srcNS)
+		w("### Finding %d — `%s` → `%s` on %s\n\n", n, gr.SrcNS, gr.DstNS, strings.Join(gr.Ports, ", "))
+		w("Declared by %s.\n\n", "`"+strings.Join(gr.Policies, "`, `")+"`")
 
-		// What was ACTUALLY denied on this pair, cross-referenced by port. The
+		if len(gr.Srcs) == 1 {
+			w("**Sender:** `%s`\n\n", gr.Srcs[0])
+		} else {
+			w("**Senders (%d):** `%s`\n\n", len(gr.Srcs), strings.Join(gr.Srcs, "`, `"))
+		}
+		if len(gr.Dsts) == 1 {
+			w("**Unreachable peer:** `%s`\n\n", gr.Dsts[0])
+		} else {
+			w("**Unreachable peers (%d)** — the policy names the namespace, so it fans out to every "+
+				"workload in it:\n\n", len(gr.Dsts))
+			for _, d := range gr.Dsts {
+				w("- `%s`\n", d)
+			}
+			w("\n")
+		}
+
+		// What was ACTUALLY denied on this pair, cross-referenced by PORT. The
 		// three answers demand three different responses, and the brief used to
 		// give the same one to all three.
-		hit, other := x.forHalfOpen(e)
+		hit, other := x.forGroup(gr)
 		switch {
 		case len(hit) > 0:
-			w("**Observed:** this passage is genuinely being denied — `%s` dropped on `%s`. "+
+			w("**Observed:** genuinely being denied, on `%s` — the port this policy declares. "+
 				"Topology predicted it and the datapath did it. This one is real.\n\n",
-				e.Dst, strings.Join(hit, "`, `"))
+				strings.Join(hit, "`, `"))
 		case len(other) > 0:
-			w("**⚠ Observed, but NOT on this port.** Traffic to `%s` is being denied on `%s` — not on "+
-				"`%s`, which is what this policy declares. **Do not apply the fix suggested below to "+
-				"that traffic**: opening `%s` would leave those drops untouched. Two separate things are "+
-				"happening on this pair, and only one of them is the finding you are reading. Work out "+
-				"what is really talking on `%s` first — a dynamic or ephemeral port usually means the "+
-				"policy names the wrong port.\n\n",
-				e.Dst, strings.Join(other, "`, `"), strings.Join(e.Ports, "`, `"),
-				strings.Join(e.Ports, "`, `"), strings.Join(other, "`, `"))
+			w("**⚠ Observed, but NOT on this port.** This pair is being denied on `%s` — not on `%s`, "+
+				"which is what the policy declares. **The fix above does not apply to that traffic**: "+
+				"opening `%s` would leave those drops exactly where they are. Two different things are "+
+				"happening here and only one of them is this finding. Work out what is really talking on "+
+				"`%s` first — a dynamic or ephemeral port usually means the policy names the wrong port.\n\n",
+				strings.Join(other, "`, `"), strings.Join(gr.Ports, "`, `"),
+				strings.Join(gr.Ports, "`, `"), strings.Join(other, "`, `"))
 		case g.Flows != nil && g.Flows.Status == "ok" && g.Flows.Coverage >= 0.8:
 			w("**Observed:** nothing. Across %s of watched traffic (%.0f%% coverage) this passage was "+
-				"never attempted — no drops, no flows. At this coverage that is real evidence the rule "+
-				"is dead rather than broken. Verify, then propose removing it.\n\n",
+				"never attempted. At this coverage that is real evidence the rule is dead rather than "+
+				"broken — verify, then propose removing it.\n\n",
 				g.Flows.Watched, g.Flows.Coverage*100)
 		}
 
-		w("**Verify:**\n\n```sh\n")
-		w("# Does traffic actually attempt this path? Drops here confirm a real gap:\n")
-		w("hubble observe --from-namespace %s --to-namespace %s --verdict DROPPED --since 1h -o compact\n", srcNS, dstNS)
-		for _, p := range e.Policies {
-			if cmd := policyGetCmd(p); cmd != "" {
-				w("# Inspect the declaring policy:\n%s\n", cmd)
+		var cmds []string
+		for _, p := range gr.Policies {
+			if c := policyGetCmd(p); c != "" {
+				cmds = append(cmds, c)
 			}
 		}
-		w("# What does the receiver currently accept?\nkubectl get cnp,netpol -n %s -o yaml | grep -B3 -A15 ingress\n", dstNS)
-		w("```\n\n**Likely outcomes:** no drops **and** the sender never targets this peer → "+
-			"dead egress rule, propose removing it; drops observed **on these ports** → missing ingress "+
-			"allow on the `%s` side, propose an ingress rule admitting `%s` on %s. Drops on any OTHER "+
-			"port are a different problem and this fix will not touch them.\n\n",
-			dstNS, e.Src, strings.Join(e.Ports, ", "))
+		if len(cmds) > 0 {
+			w("```sh\n%s\nhubble observe --from-namespace %s --to-namespace %s --verdict DROPPED --since 1h -o compact\n```\n\n",
+				strings.Join(cmds, "\n"), gr.SrcNS, gr.DstNS)
+		}
 	}
 
 	if len(a.NoDefaultDeny) > 0 {
@@ -250,15 +297,39 @@ selector matching). They are hypotheses, not verdicts. For each finding:
 
 	if len(a.DeadRefs) > 0 {
 		n++
-		w("## Finding %d — selector references matching no live workload (%d)\n\n", n, len(a.DeadRefs))
-		w("Each is `policy → selector`. Triage order: (a) selectors for Job/init pods that only " +
-			"exist during runs are expected; (b) selectors for workloads on powered-off or scaled-down " +
-			"nodes are expected; (c) anything left is a dead rule — verify the workload really no " +
-			"longer exists, then propose removing the rule.\n\n")
-		for _, r := range a.DeadRefs {
-			w("- `%s`\n", r)
+		expected, review := groupDeadRefs(a.DeadRefs)
+		w("## Finding %d — selector references matching no live workload (%d selectors)\n\n",
+			n, len(expected)+len(review))
+		w("Grouped by SELECTOR, not by policy: `pgbouncer-db-init` appearing in fourteen namespaces is " +
+			"one fact about one kind of Job, not fourteen findings. The policies referencing each are " +
+			"listed under it.\n\n")
+
+		if len(expected) > 0 {
+			w("### Expected — run-to-completion workloads (%d)\n\n", len(expected))
+			w("These name Jobs, init containers and bootstrap tasks: pods that exist only while they " +
+				"run, so matching nothing at rest is *correct*. Removing these rules would break the next " +
+				"run. Skim, confirm the naming really is job-like, and move on — they are listed to be " +
+				"dismissed, not investigated.\n\n")
+			for _, r := range expected {
+				w("- `%s` — %d %s\n", r.Selector, len(r.Policies), plural(len(r.Policies), "policy", "policies"))
+			}
+			w("\n")
 		}
-		w("\n```sh\n# Does anything match the selector's labels (any state, any node)?\n" +
+
+		if len(review) > 0 {
+			w("### Worth a look (%d)\n\n", len(review))
+			w("Nothing in these names marks them as run-to-completion, so a selector matching nothing " +
+				"is either a scaled-down/powered-off workload (expected) or a genuinely dead rule " +
+				"(remove it). Check before proposing anything.\n\n")
+			for _, r := range review {
+				w("- `%s`\n", r.Selector)
+				for _, p := range r.Policies {
+					w("  - `%s`\n", p)
+				}
+			}
+			w("\n")
+		}
+		w("```sh\n# Does anything match this selector's labels, in any state, on any node?\n" +
 			"kubectl get pods -A -l <key>=<value> --show-labels\n```\n\n")
 	}
 
@@ -309,6 +380,277 @@ func ratePerHour(f *FlowOverlay) (func(int) string, bool) {
 			return fmt.Sprintf(" (≈%.2f/h)", r)
 		}
 	}, true
+}
+
+// deadRefGroup is one selector and every policy that references it.
+type deadRefGroup struct {
+	Selector string
+	Policies []string
+}
+
+// jobLike marks names belonging to workloads that RUN AND FINISH. A selector
+// matching nothing is the correct resting state for these, not a fault.
+//
+// This is a heuristic on names and it is allowed to be: it only decides which
+// pile a finding is read in, never whether it is shown. Anything it gets wrong
+// still appears, under "worth a look" — the cost of a miss is a second of
+// reading, not a missed bug.
+var jobLike = []string{
+	"init", "job", "bootstrap", "cleanup", "populate", "post-upgrade",
+	"unseal", "migrate", "schema", "sync", "startupapicheck", "onboard",
+}
+
+// groupDeadRefs turns "policy → selector" lines into one entry per SELECTOR,
+// and splits off the run-to-completion ones.
+//
+// 54 lines became 54 findings, of which the overwhelming majority were
+// `pgbouncer-db-init` — one Job, deployed into fourteen namespaces, correctly
+// matching nothing because it is not running. That is one fact, and it is not
+// even a problem. Burying six real questions under it is how a brief teaches
+// its reader to skip the section.
+func groupDeadRefs(refs []string) (expected, review []deadRefGroup) {
+	idx := map[string][]string{}
+	var order []string
+	for _, r := range refs {
+		policy, selector, ok := strings.Cut(r, " → ")
+		if !ok {
+			policy, selector = "", r
+		}
+		if _, seen := idx[selector]; !seen {
+			order = append(order, selector)
+		}
+		idx[selector] = append(idx[selector], policy)
+	}
+	for _, sel := range order {
+		gr := deadRefGroup{Selector: sel, Policies: idx[sel]}
+		slices.Sort(gr.Policies)
+		gr.Policies = slices.Compact(gr.Policies)
+		// Match the selector AND the policies referencing it: the job-like word
+		// often lives in the policy name (`longhorn-post-upgrade`) rather than in
+		// the selector it declares.
+		hay := strings.ToLower(sel + " " + strings.Join(gr.Policies, " "))
+		if slices.ContainsFunc(jobLike, func(w string) bool { return strings.Contains(hay, w) }) {
+			expected = append(expected, gr)
+		} else {
+			review = append(review, gr)
+		}
+	}
+	return expected, review
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// halfOpenGroup is one FACT — a policy letting a namespace out to another on
+// some ports, into a default-deny that never lets it in — with the peers it
+// fans across held inside it, where they belong.
+type halfOpenGroup struct {
+	Policies []string
+	Ports    []string
+	SrcNS    string
+	DstNS    string
+	Srcs     []string
+	Dsts     []string
+	// Pairs are the underlying edges, kept for the cross-reference.
+	Pairs []Edge
+}
+
+// groupHalfOpen collapses per-peer half-open edges into the fact they all
+// restate.
+//
+// A policy that names a NAMESPACE fans out to every workload in it: keycloak's
+// one DNS egress rule became nine findings, one per kube-system pod, each with
+// the same policy, port, diagnosis and verify recipe. Nine copies of one fact
+// is not nine facts. Grouping on (policy, ports, src-ns, dst-ns) puts the fact
+// in the heading and the fan-out where it belongs — in a list inside it.
+func groupHalfOpen(edges []Edge) []halfOpenGroup {
+	type key struct{ pols, ports, srcNS, dstNS string }
+	idx := map[key]*halfOpenGroup{}
+	var order []key
+
+	for _, e := range edges {
+		srcNS, _ := nodeNS(e.Src)
+		dstNS, _ := nodeNS(e.Dst)
+		pols := slices.Clone(e.Policies)
+		slices.Sort(pols)
+		ports := slices.Clone(e.Ports)
+		slices.Sort(ports)
+
+		k := key{strings.Join(pols, ","), strings.Join(ports, ","), srcNS, dstNS}
+		gr, ok := idx[k]
+		if !ok {
+			gr = &halfOpenGroup{Policies: pols, Ports: ports, SrcNS: srcNS, DstNS: dstNS}
+			idx[k] = gr
+			order = append(order, k)
+		}
+		gr.Srcs = append(gr.Srcs, e.Src)
+		gr.Dsts = append(gr.Dsts, e.Dst)
+		gr.Pairs = append(gr.Pairs, e)
+	}
+
+	out := make([]halfOpenGroup, 0, len(order))
+	for _, k := range order {
+		gr := idx[k]
+		slices.Sort(gr.Srcs)
+		slices.Sort(gr.Dsts)
+		gr.Srcs = slices.Compact(gr.Srcs)
+		gr.Dsts = slices.Compact(gr.Dsts)
+		out = append(out, *gr)
+	}
+	return out
+}
+
+// rankHalfOpen orders groups by EVIDENCE, not by size or name.
+//
+// A passage the datapath is actually denying is a fact. A passage that merely
+// exists in the YAML is a hypothesis. Sorting them together — alphabetically —
+// buries the first under the second, and the top of the list is the only part
+// most readers reach.
+func rankHalfOpen(groups []halfOpenGroup, x *crossRef) []halfOpenGroup {
+	out := slices.Clone(groups)
+	weight := func(gr halfOpenGroup) int {
+		hit, other := x.forGroup(gr)
+		switch {
+		case len(other) > 0:
+			return 0 // a wrong fix is sitting here waiting to be applied
+		case len(hit) > 0:
+			return 1 // predicted by topology, done by the datapath: real
+		default:
+			return 2 // declared, never exercised — probably a dead rule
+		}
+	}
+	slices.SortFunc(out, func(p, q halfOpenGroup) int {
+		return cmp.Or(
+			cmp.Compare(weight(p), weight(q)),
+			cmp.Compare(len(q.Dsts)+len(q.Srcs), len(p.Dsts)+len(p.Srcs)),
+			cmp.Compare(p.SrcNS, q.SrcNS),
+			cmp.Compare(p.DstNS, q.DstNS),
+		)
+	})
+	return out
+}
+
+// forGroup is forHalfOpen over every pair a group covers.
+func (x *crossRef) forGroup(gr halfOpenGroup) (hit, other []string) {
+	for _, e := range gr.Pairs {
+		h, o := x.forHalfOpen(e)
+		hit = append(hit, h...)
+		other = append(other, o...)
+	}
+	slices.Sort(hit)
+	slices.Sort(other)
+	return slices.Compact(hit), slices.Compact(other)
+}
+
+// ephemeralFrom is the low end of Linux's default ephemeral port range
+// (net.ipv4.ip_local_port_range = 32768 60999). A destination port up here is
+// almost never a service — it is one end of a dynamically negotiated
+// connection.
+const ephemeralFrom = 32768
+
+// foldEphemeral collapses drops to dynamically-allocated ports into a single
+// row per (src, dst, protocol, reason).
+//
+// Longhorn's instance managers are denied on a fresh high port every time —
+// 37164 one run, 38906 the next, 33582 the one after. Rendered literally, the
+// same standing problem looks like a brand-new finding on every brief, and
+// nothing ever matches between two runs: no diff, no suppression, no memory.
+// The port number carries no information; that it is ephemeral does.
+func foldEphemeral(drops []DropEdge) []DropEdge {
+	type key struct{ src, dst, port, reason string }
+	folded := map[key]*DropEdge{}
+	var order []key
+
+	for _, d := range drops {
+		k := key{d.Src, d.Dst, ephemeralLabel(d.Port), d.Reason}
+		f, ok := folded[k]
+		if !ok {
+			c := d
+			c.Port = k.port
+			folded[k] = &c
+			order = append(order, k)
+			continue
+		}
+		f.Count += d.Count
+		if d.LastSeen.After(f.LastSeen) {
+			f.LastSeen = d.LastSeen
+		}
+		if !d.FirstSeen.IsZero() && (f.FirstSeen.IsZero() || d.FirstSeen.Before(f.FirstSeen)) {
+			f.FirstSeen = d.FirstSeen
+		}
+		if d.Buckets > f.Buckets {
+			f.Buckets = d.Buckets
+		}
+	}
+	out := make([]DropEdge, 0, len(order))
+	for _, k := range order {
+		out = append(out, *folded[k])
+	}
+	return out
+}
+
+// ephemeralLabel rewrites "38906/TCP" as "ephemeral/TCP", and leaves real
+// service ports alone.
+func ephemeralLabel(port string) string {
+	num, proto, ok := strings.Cut(port, "/")
+	if !ok {
+		return port
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < ephemeralFrom {
+		return port
+	}
+	return "ephemeral/" + proto
+}
+
+// rankDrops orders by consequence rather than alphabet.
+//
+// `cleanuparr` bleeding 57 drops an hour sat BELOW a `jellyfin` blip that
+// happened once and stopped, because "c" comes before "j". The top of the list
+// is the only part most readers reach, so what goes there is the whole design.
+//
+// Order: still happening before finished; then confirmed misconfigurations and
+// port mismatches (the ones with a known, wrong, or dangerous fix) before
+// unexplained ones; then loudest first.
+func rankDrops(drops []DropEdge, x *crossRef, f *FlowOverlay) []DropEdge {
+	out := slices.Clone(drops)
+	weight := func(d DropEdge) int {
+		key := d.Src + "|" + d.Dst + "|" + d.Port
+		switch {
+		case x.mismatch[key] != nil:
+			return 0 // a wrong fix is waiting to be applied here
+		case x.confirmed[key]:
+			return 1 // topology predicted it and the datapath did it
+		default:
+			return 2
+		}
+	}
+	live := func(d DropEdge) bool {
+		if f == nil || f.BucketSec <= 0 || f.To.IsZero() {
+			return true // unknown: do not demote it
+		}
+		return f.To.Sub(d.LastSeen) <= 2*time.Duration(f.BucketSec)*time.Second
+	}
+	slices.SortFunc(out, func(p, q DropEdge) int {
+		if a, b := live(p), live(q); a != b {
+			if a {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Or(
+			cmp.Compare(weight(p), weight(q)),
+			cmp.Compare(q.Count, p.Count), // loudest first
+			cmp.Compare(p.Src, q.Src),
+			cmp.Compare(p.Dst, q.Dst),
+			cmp.Compare(p.Port, q.Port),
+		)
+	})
+	return out
 }
 
 // crossRef pre-joins observed drops against half-open findings, so the reader
