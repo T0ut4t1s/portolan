@@ -47,7 +47,11 @@ type Graph struct {
 	// Flows is the observed-traffic overlay, present when the snapshot
 	// carried a Hubble capture (see FlowOverlay).
 	Flows *FlowOverlay `json:"flows,omitempty"`
-	Stats Stats        `json:"stats"`
+	// Fixes maps a half-open pair ("src|dst") to the change that would clear
+	// that flag, where one is honestly derivable (see FixCandidate). Populated
+	// by serve for the map's "Test policy" button; nil for one-shot renders.
+	Fixes map[string]*FixCandidate `json:"fixes,omitempty"`
+	Stats Stats                    `json:"stats"`
 }
 
 // Namespace groups the workload nodes it contains.

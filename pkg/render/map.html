@@ -402,6 +402,20 @@
     padding:6px 0;border-top:1px solid var(--line);}
   .rule .peer{font-family:var(--mono);font-size:.78rem;min-width:0;}
   .rule .peer small{display:block;color:var(--faint);font-size:.64rem;word-break:break-all;}
+  .btn.tiny{padding:2px 8px;font-size:.68rem;}
+  /* "Test policy" leads with the accent — it's the primary action on a finding,
+     but it opens a test, so it never wears the alarm/allow colours a verdict does. */
+  .btn.testpol{padding:2px 8px;font-size:.68rem;border-color:var(--accent);color:var(--accent);}
+  /* The honesty banner on a staged verdict: what "tested" actually covers. */
+  .cov-note{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line-2);border-radius:8px;
+    background:var(--surface);font-size:.7rem;color:var(--muted);line-height:1.5;}
+  .cov-note b{color:var(--ink);}
+  .crumb{background:none;border:none;color:var(--accent);font:inherit;font-size:.72rem;
+    cursor:pointer;padding:0;}
+  .crumb:hover{text-decoration:underline;}
+  .wif-staged{margin:0 0 8px;font-size:.72rem;color:var(--muted);}
+  .wif-staged b{color:var(--ink);}
+  .wif-touches{color:var(--world);}
   /* Ports wrap and never take more than half the row — a six-port rule
      must not crush the peer name into unreadability. */
   .rule .ports{font-family:var(--mono);font-size:.72rem;color:var(--allow);font-weight:600;
@@ -1009,6 +1023,10 @@ const UI = __PORTOLAN_UI__;
   // compose with whatever view state is active — the stats-row chip
   // counts them.
   let wifOn = false, wifRules = [], wifSim = null, wifBusy = false, wifErrText = "", wifSeq = 0;
+  // When what-if was opened by "Test policy" on a finding: wifStaged is the
+  // candidate (for the header + coverage note), wifReturn the audit state to
+  // restore on "back to findings". Null for freehand what-if.
+  let wifStaged = null, wifReturn = null;
   // wifTyping mirrors the composer's text fields: while the panel is open
   // they filter the map like the search field — ALL non-empty fields at
   // once (a card matching either endpoint stays), so locating both ends
@@ -1149,13 +1167,24 @@ const UI = __PORTOLAN_UI__;
     const world = [...new Set(DATA.edges.filter(e => worldLike.has(e.s) && e.in).map(e => e.d))].sort();
     const noDeny = DATA.namespaces.filter(n => !n.defaultDeny && n.workloads.length).map(n => n.name);
     const dead = DATA.deadRefs || [];
+    // A finding carries a "Test policy" button only where the server derived a
+    // change that would clear THIS flag (DATA.fixes, keyed by pair). It opens
+    // what-if with that change staged and simulated — it changes nothing itself.
+    const fixFor = (s, d) => (DATA.fixes || {})[s + "|" + d];
+    const testBtn = (s, d) => {
+      const f = fixFor(s, d);
+      return f ? `<button class="btn testpol" data-fix="${esc(s + "|" + d)}"
+        title="${esc(f.summary)} — opens what-if to test it; changes nothing">test policy</button>` : "";
+    };
     const item = e => `<div class="rule" data-es="${esc(e.s)}" data-ed="${esc(e.d)}"><span class="peer">
-        <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(e.s)}" data-qb="${esc(e.d)}">check</button>
+        <button class="btn tiny" data-qa="${esc(e.s)}" data-qb="${esc(e.d)}">check</button>
+        ${testBtn(e.s, e.d)}
         ${esc(e.s)} → ${esc(e.d)}<small>${polLinks(e.policies)}</small></span>
         <span class="ports">${e.ports.map(esc).join(" ")}</span></div>`;
     const drops = FLOWS ? FLOWS.drops : [];
     const dropItem = d => `<div class="rule" data-es="${esc(d.s)}" data-ed="${esc(d.d)}"><span class="peer">
-        <button class="btn" style="padding:2px 8px;font-size:.68rem" data-qa="${esc(d.s)}" data-qb="${esc(d.d)}">check</button>
+        <button class="btn tiny" data-qa="${esc(d.s)}" data-qb="${esc(d.d)}">check</button>
+        ${testBtn(d.s, d.d)}
         ${esc(d.s)} → ${esc(d.d)}<small>${esc(d.reason || "dropped")} ×${d.n}${d.last ? " · last " + esc(d.last.slice(11,19)) : ""}</small></span>
         <span class="ports bad">${esc(d.port || "—")}</span></div>`;
     renderInsp(`<p class="insp-kicker">audit</p>
@@ -2284,10 +2313,37 @@ const UI = __PORTOLAN_UI__;
   // sides. The server derives real CNPs, simulates them with Cilium's
   // engine, and the SAME objects back the generate button — the preview
   // can never drift from the YAML.
+  // When what-if was opened from a finding, lead with a breadcrumb back to the
+  // findings list — the list is home and you're never stranded here.
+  const wifKicker = () => wifReturn
+    ? `<p class="insp-kicker"><button class="crumb" data-wif-back>← findings</button> · what-if</p>`
+    : `<p class="insp-kicker">what-if</p>`;
+
+  // The honesty banner on a staged test. This is the single most important line
+  // in the whole resolution loop: a green delta must NEVER read as "safe". The
+  // engine only knows the traffic it observed, and "observed" is not "all" — so
+  // say exactly what "tested" covers, at the moment someone is about to trust it.
+  function coverageNote(){
+    if (!wifStaged || !FLOWS) return "";
+    const cov = Math.round((FLOWS.coverage || 0) * 100);
+    const weak = cov < 80 || FLOWS.source === "buffer";
+    return `<div class="cov-note"><b>What “tested” means here.</b> Cilium's own engine checked this
+      change against the traffic actually observed — <b>${esc(FLOWS.watched || "?")}</b> at
+      <b>${cov}% coverage</b> of the ${esc(FLOWS.window)} window. The impact shown below is real, but
+      ${weak
+        ? "coverage is low, so traffic that did not appear may simply have gone unseen — this test is weak."
+        : "traffic rarer than that window was never seen and is not in this test."}
+      It clears the flag; it is a change to <b>test and review</b>, not a fix to trust.
+      ${wifStaged.touches ? `Changes a policy in <span class="wif-touches">namespace <b>${esc(wifStaged.touches)}</b></span>.` : ""}
+      Nothing here touches the cluster.</div>`;
+  }
+
   function renderWifInspector(){
     if (!wifSim){
-      renderInsp(`<p class="insp-kicker">what-if</p>
-        <p class="insp-title">draft &amp; simulate</p>`, `
+      renderInsp(wifKicker(),
+        wifStaged
+        ? `${coverageNote()}<p class="empty">Simulating…</p>`
+        : `<p class="insp-title">draft &amp; simulate</p>
         <p class="empty guide">Add an allow rule on the left of the panel. Portolan generates
         the real CiliumNetworkPolicies, simulates them with Cilium's own policy engine
         against the latest snapshot, and draws the delta — green marching passages are
@@ -2324,9 +2380,10 @@ const UI = __PORTOLAN_UI__;
           <small>was via ${(dl.via || []).map(v => esc(polAbbr(v))).join(", ")}</small></span>
         <span class="ports bad">${(dl.ports || []).map(esc).join(" ")}</span></div>`;
     }).join("");
-    renderInsp(`<p class="insp-kicker">what-if</p>
-      <p class="insp-title">draft delta</p>
+    renderInsp(`${wifKicker()}
+      <p class="insp-title">${wifStaged ? "does this clear the flag?" : "draft delta"}</p>
       <p class="insp-sub">${(r.policyChanges || []).map(c => esc(polAbbrText(c))).join("<br>")}</p>`, `
+      ${coverageNote()}
       ${v.breaks.length ? `<div class="half-warn"><b>removal cuts live traffic</b> — flows
         observed in the capture window ride the passages being closed.</div>` : ""}
       ${hoRows ? `<div class="half-warn"><b>half-open introduced</b> — one side declared,
@@ -2594,6 +2651,10 @@ const UI = __PORTOLAN_UI__;
     wifOn = !wifOn;
     this.setAttribute("aria-pressed", String(wifOn));
     document.body.classList.toggle("wif-on", wifOn);
+    // Toggling the panel by hand leaves the finding-staged context behind: the
+    // breadcrumb and coverage note belong to a test you launched from a finding,
+    // not to freehand composing.
+    wifStaged = wifReturn = null;
     if (wifOn){
       wifAssertView();
       renderWifPanel();
@@ -2602,14 +2663,57 @@ const UI = __PORTOLAN_UI__;
     redraw();
   });
 
-  // audit rows carry a "check" button that runs the passage query
+  // audit rows carry a "check" button (diagnostic) and, where the server
+  // derived a flag-clearing change, a "test policy" button (resolution).
   insp.addEventListener("click", e => {
+    const fix = e.target.closest("[data-fix]");
+    if (fix) { stageFix(fix.dataset.fix); return; }
+    const back = e.target.closest("[data-wif-back]");
+    if (back) { wifBack(); return; }
     const b = e.target.closest("[data-qa]");
     if (!b) return;
     $("#qa").value = b.dataset.qa; $("#qb").value = b.dataset.qb;
     exitAudit();
     runQuery();
   });
+
+  // stageFix opens what-if with the finding's candidate change already loaded
+  // and simulated — the "draft and its proof arrive together" idea, no typing.
+  // It changes nothing on the cluster; what-if never does.
+  function stageFix(key){
+    const f = (DATA.fixes || {})[key];
+    if (!f) return;
+    // Remember the audit view so "back to findings" returns exactly here.
+    wifReturn = { findingFilter, auditMode, key };
+    wifStaged = f;
+    wifRules = (f.rules || [])
+      .map(r => ({ from: r.from, to: r.to, ports: r.ports || [], sides: r.sides || "both", sel: true }))
+      .concat((f.deletes || []).map(del => ({ del, sel: true })));
+    wifSim = null;
+    if (!wifOn) {
+      wifOn = true;
+      $("#wifbtn").setAttribute("aria-pressed", "true");
+      document.body.classList.add("wif-on");
+    }
+    wifAssertView();     // clears pin/finding/focus so the delta is what shows
+    renderWifPanel();
+    wifSimulate();       // fetch the verdict; renderWifInspector shows it
+    redraw();
+  }
+
+  // wifBack unwinds a staged test: drop the draft, leave what-if, and restore
+  // the findings list you came from. The list was the home; you return to it.
+  function wifBack(){
+    const ret = wifReturn;
+    wifRules = []; wifSim = null; wifErrText = ""; wifSeq++;
+    wifStaged = null; wifReturn = null;
+    wifOn = false;
+    $("#wifbtn").setAttribute("aria-pressed", "false");
+    document.body.classList.remove("wif-on");
+    if (ret) { findingFilter = ret.findingFilter; auditMode = ret.auditMode; }
+    renderWifPanel();
+    redraw();
+  }
   // ---------- document overlay ----------
   // One overlay for anything you might want to take away: a policy's raw rules,
   // the draft what-if manifests, the investigation brief. Copy is always there;
@@ -2728,6 +2832,7 @@ const UI = __PORTOLAN_UI__;
   function resetView(){
     pinned = hovered = focusNS = queryPair = findingFilter = null;
     if (auditMode) exitAudit();
+    wifStaged = wifReturn = null;
     // Reset is total: the what-if draft goes too — rules, projections,
     // simulation, and the panel all clear back to a blank slate.
     if (wifOn) { wifOn = false; $("#wifbtn").setAttribute("aria-pressed", "false"); document.body.classList.remove("wif-on"); }

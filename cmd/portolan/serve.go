@@ -319,6 +319,10 @@ func cmdServe(ctx context.Context, args []string) error {
 
 		g := graph.Build(snap)
 		a := graph.ComputeAudit(g)
+		// Attach the flag-clearing candidates so the map's "Test policy" button
+		// has a change to stage. Reuses the brief's classification, so button
+		// and brief cannot disagree about a finding.
+		g.Fixes = graph.ComputeFixes(g, a)
 		html, err := render.HTML(g, ui)
 		if err != nil {
 			s.mu.Lock()
