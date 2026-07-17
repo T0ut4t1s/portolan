@@ -30,6 +30,9 @@ type UI struct {
 	// Auth reveals the sign-out control. False for standalone files, where
 	// there is no server to sign out of.
 	Auth bool `json:"auth"`
+	// Version is the running build, shown in the footer so a viewer can tell at
+	// a glance whether they are looking at a fresh page after a deploy.
+	Version string `json:"version,omitempty"`
 }
 
 // HTML renders the graph into the embedded template.

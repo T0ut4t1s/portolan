@@ -552,7 +552,7 @@
         <div class="setnote" id="win-note"></div>
       </div>
       <div class="setdiv"></div>
-      <div class="setabout">Portolan network policy map · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
+      <div class="setabout">Portolan network policy map<span id="ver"></span> · <a href="https://github.com/T0ut4t1s/portolan" target="_blank" rel="noopener">github</a></div>
     </div>
   </span>
   <!-- Session gutter: POST, not a link — a GET /logout can be fired by any
@@ -654,6 +654,7 @@ const UI = __PORTOLAN_UI__;
   // Sign-out stays hidden unless a server with auth enabled served this page.
   // A standalone rendered file has no server to sign out of.
   if (UI.auth) $("#signout").hidden = false;
+  if (UI.version) $("#ver").textContent = " " + UI.version;
 
   // ---------- theme ----------
   // localStorage throws in sandboxed viewers (file://, iframes); the map

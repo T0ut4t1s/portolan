@@ -278,7 +278,7 @@ func cmdServe(ctx context.Context, args []string) error {
 
 	// Fixed for the life of the process: every viewer gets the same bytes, so
 	// this can only carry deployment facts, never anything per-user.
-	ui := render.UI{Auth: authn.Enabled()}
+	ui := render.UI{Auth: authn.Enabled(), Version: version}
 
 	// Load decisions already taken. A malformed file is a hard error rather than
 	// a warning: silently suppressing NOTHING when the operator believes they
@@ -456,7 +456,13 @@ func cmdServe(ctx context.Context, args []string) error {
 
 	// The gate wraps every route: /healthz and the auth endpoints stay public,
 	// everything else requires a valid session.
-	srv := &http.Server{Addr: *addr, Handler: authn.Middleware(mux), ReadHeaderTimeout: 10 * time.Second}
+	// The map and every JSON view are rebuilt each collection and must never be
+	// cached: a browser that reuses yesterday's 460 KB page shows a stale map —
+	// and, after a deploy, none of the new features (this is how the "Test
+	// policy" button went missing after 0.28.0 shipped). no-store is correct
+	// because nothing here is ever safe to reuse; there is no static asset.
+	handler := noStore(authn.Middleware(mux))
+	srv := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -717,6 +723,16 @@ func pruneFlows(ctx context.Context, store *flowstore.Store, every time.Duration
 			}
 		}
 	}
+}
+
+// noStore stamps every response no-store. The whole surface is dynamic —
+// rebuilt each collection — so caching any of it only ever serves something out
+// of date.
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // historyHandler lists and serves the snapshot archive.
